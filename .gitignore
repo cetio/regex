@@ -1,0 +1,16 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/ctgex
+ctgex.so
+ctgex.dylib
+ctgex.dll
+ctgex.a
+ctgex.lib
+ctgex-test-*
+*.exe
+*.pdb
+*.o
+*.obj
+*.lst

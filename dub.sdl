@@ -1,0 +1,5 @@
+name "ctgex"
+description "Comptime regex"
+authors "cet"
+copyright "Copyright © 2024, cet"
+license "MPL-2.0"

@@ -8,44 +8,46 @@ import std.algorithm;
 
 void main()
 {
-	auto regex = new Regex(r"[abc]+", "");
-	writeln(regex.match("ababbcc"));
+	auto regex = new Regex(r"^a%1%1", "");
+	foreach (element; regex.elements)
+		writeln(element);
+	writeln(regex.match("aaa"));
 }
 
 public enum : ubyte
 {
 	BAD,
-    // (?...)
+    /// `(?...)`
     LOOKAHEAD,
-    // (...<...)
+    /// `(...<...)`
     LOOKBEHIND,
-    // [...]
+    /// `[...]`
     CHARACTERS,
-    // ^
+    /// `^`
     ANCHOR_START,
-    // $
+    /// `$`
     ANCHOR_END,
-    // (...)
+    /// `(...)`
     GROUP,
-    // .
+    /// `.`
     ANY,
-    // Refers to a group. ie: \gn or $n
-    // Also be known as a backref or a jump
+    /// ~`\gn`~ or `$n` (group) or `%n` (absolute)
     REFERENCE,
     // Not used! Comments don't need to be parsed!
     // (?#...)
     //COMMENT
-	RESET,
+	/// `\K` `\Kn`
+	RESET
 }
 
 public enum : ubyte
 {
     NONE = 0,
-	// |
+	/// `|`
 	ALTERNATE = 1,
-    // [^...]
+    /// `[^...]`
     EXCLUSIONARY = 2,
-    // {...}
+    /// `{...}`
     QUANTIFIED = 4,
     // *
     //GREEDY = 8,
@@ -58,11 +60,13 @@ public enum : ubyte
     // Also (...) (capture group)
     //CAPTURE = 64,
     //POSITIVE = 64,
-    // (...!...)
-    // Also (?:...) (non capture group)
+    /// `(?:...)`
     NONCAPTURE = 8,
+	/// `(...!...)`
     NEGATIVE = 8,
+	/// `...?`
 	LAZY = 8,
+	/// `...+`
 	GREEDY = 16
 }
 
@@ -80,26 +84,161 @@ public enum : ubyte
     SINGLELINE = 32
 }
 
+string marketEscapes(string str)
+{
+    string result;
+    foreach (c; str)
+    {
+        switch (c)
+        {
+            case '\n': result ~= "\\n"; break;
+            case '\r': result ~= "\\r"; break;
+            case '\t': result ~= "\\t"; break;
+			case '\a': result ~= "\\a"; break;
+            case '\b': result ~= "\\b"; break;
+            case '\f': result ~= "\\f"; break;
+            case '\v': result ~= "\\v"; break;
+            case '\0': result ~= "\\0"; break;
+            default: result ~= c; break;
+        }
+    }
+    return result;
+}
+
+
 private struct Element
 {
 public:
-    align(1):
+align(1):
+	/// What kind of element is this?
+	/// eg: `CHARACTERS`
     ubyte token;
+	/// What are the special modifiers of this element?
+	/// eg: `EXCLUSIONARY`
 	ubyte modifiers;
+	/// Number of characters or elements to be read during fulfillment
+	/// eg: `3`
     uint length;
     union
     {
+		/// Characters mapped (like in a character set or literal)
+		/// eg: `&cache.table[0]`
         char* str;
+		/// Elements mapped (like in a group or reference)
         Element* elements;
     }
-    uint min = 1;
-    uint max = 1;
+	/// Minimum times to require fulfillment
+	/// eg: `1`
+    uint min;
+	/// Maximum times to allow fulfillment
+	/// eg: `1`
+    uint max;
 
     this (ubyte token, char* str)
     {
         this.token = token;
         this.str = str;
     }
+
+	bool fulfilled(Regex regex, string text, ref uint index)
+	{
+		switch (token)
+		{
+			case BAD:
+				throw new Exception("Cannot fulfill a bad token, fix your regex or live with the consequences of your actions.");
+			case LOOKAHEAD:
+				return false;
+			case LOOKBEHIND:
+				return false;
+			case CHARACTERS:
+				bool match;
+				foreach (i; 0..length)
+				{
+					if (str[i] == text[index])
+						match = true;
+				}
+				return (modifiers & EXCLUSIONARY) != 0 ? !match : match;
+				break;
+			case ANCHOR_START:
+				return index == 0 || ((regex.flags & MULTILINE) != 0 && 
+					(text[index - 1] == '\r' || text[index - 1] == '\n' || text[index - 1] == '\f'));
+			case ANCHOR_END:
+				return index >= text.length || ((regex.flags & MULTILINE) != 0 && 
+					(text[index + 1] == '\r' || text[index + 1] == '\n' || text[index + 1] == '\f' || text[index + 1] == '\0'));
+			case GROUP:
+				foreach (i; 0..length)
+				{
+					if (!elements[i].fulfilled(regex, text, index))
+						return false;
+				}
+				return true;
+			case ANY:
+				return ((regex.flags & SINGLELINE) != 0 || (text[index] != '\r' && text[index] != '\n' && text[index] != '\f'));
+			case REFERENCE:
+				return elements[0].fulfilled(regex, text, index);
+			default:
+				return false;
+		}
+	}
+
+	string toString() const
+	{
+		string token;
+		string modifiers;
+		switch (this.token)
+		{
+			case BAD: token = "BAD"; break;
+			case LOOKAHEAD: token = "LOOKAHEAD"; break;
+			case LOOKBEHIND: token = "LOOKBEHIND"; break;
+			case CHARACTERS: token = "CHARACTERS"; break;
+			case ANCHOR_START: token = "ANCHOR_START"; break;
+			case ANCHOR_END: token = "ANCHOR_END"; break;
+			case GROUP: token = "GROUP"; break;
+			case ANY: token = "ANY"; break;
+			case REFERENCE: token = "REFERENCE"; break;
+			case RESET: token = "RESET"; break;
+			default: token = this.token.to!string; break;
+		}
+
+		if (this.modifiers == 0)
+			modifiers = "NONE";
+
+		if ((this.modifiers & ALTERNATE) != 0)
+			modifiers ~= modifiers.length != 0 
+				? " | ALTERNATE" 
+				: "ALTERNATE";
+
+		if ((this.modifiers & EXCLUSIONARY) != 0)
+			modifiers ~= modifiers.length != 0 
+				? " | EXCLUSIONARY" 
+				: "EXCLUSIONARY";
+
+		if ((this.modifiers & QUANTIFIED) != 0)
+			modifiers ~= modifiers.length != 0 
+				? " | QUANTIFIED" 
+				: "QUANTIFIED";
+
+		if ((this.modifiers & NONCAPTURE) != 0)
+			modifiers ~= this.token == GROUP 
+				? modifiers.length != 0 
+					? " | NEGATIVE" 
+					: "NEGATIVE" 
+				: modifiers.length != 0 
+					? " | NONCAPTURE" 
+					: "NONCAPTURE";
+		
+		if ((this.modifiers & LAZY) != 0)
+			modifiers ~= modifiers.length != 0 
+				? " | LAZY"
+				: "LAZY";
+		
+		if ((this.modifiers & GREEDY) != 0)
+			modifiers ~= modifiers.length != 0 
+				? " | GREEDY"
+				: "GREEDY";
+
+		return "\x1b[36m"~token~" "~modifiers~"\x1b[0m "~length.to!string~" [ onion: \x1b[36m"~(length == 0 ? "NULL" : str[0..length].to!string.marketEscapes())~"\x1b[0m ] "~min.to!string~" "~max.to!string;
+	}
 }
 
 private alias cache = Cache!();
@@ -223,6 +362,7 @@ public:
 				case '+':
 					if (elements[$-1].mayQuantify)
 					{
+						elements[$-1].min = 1;
 						elements[$-1].max = uint.max;
 						elements[$-1].modifiers |= QUANTIFIED;
 					}
@@ -275,9 +415,13 @@ public:
 					break;
 				case '.':
 					element.token = ANY;
+					element.min = 1;
+					element.max = 1;
 					break;
 				case '[':
 					element.token = CHARACTERS;
+					element.min = 1;
+					element.max = 1;
 					if (i + 1 < pattern.length && pattern[i + 1] == '^')
 					{
 						element.modifiers |= EXCLUSIONARY;
@@ -292,6 +436,23 @@ public:
 				case '^':
 					element.token = ANCHOR_START;
 					break;
+				case '%':
+					if (i + 1 < pattern.length && pattern[i + 1].isDigit)
+					{
+						string rid;
+						while (i + 1 < pattern.length && pattern[i + 1].isDigit)
+							rid ~= pattern[++i];
+						uint id = rid.to!uint;
+
+						if (elements.length > id)
+						{
+							element.token = REFERENCE;
+							element.length = 1;
+							element.elements = &elements[id];
+						}
+						break;
+					}
+					break;
 				case '$':
 					if (i + 1 < pattern.length && pattern[i + 1].isDigit)
 					{
@@ -299,7 +460,7 @@ public:
 						while (i + 1 < pattern.length && pattern[i + 1].isDigit)
 							rid ~= pattern[++i];
 						uint id = rid.to!uint;
-						int visits;
+						uint visits;
 						foreach (ii; 0..elements.length)
 					    {
 							if (elements[ii].token == GROUP && visits++ == id)
@@ -315,21 +476,21 @@ public:
 					break;
 				default:
 					element.token = CHARACTERS;
-					element.length = 1;
 					// Will not be adding support for \gn
 					// Expected to use $n
 					if (c == '\\' && i + 1 < pattern.length)
 					{
-						if (i + 1 < pattern.length && pattern[i + 1] == 'K')
+						if (pattern[i..(i + 2)] == "\\K")
 						{
+							i++;
 							element.token = RESET;
-							if (++i + 1 < pattern.length && pattern[i + 1].isDigit)
+							if (i + 1 < pattern.length && pattern[i + 1].isDigit)
 							{
 								string rid;
 								while (i + 1 < pattern.length && pattern[i + 1].isDigit)
 									rid ~= pattern[++i];
 								uint id = rid.to!uint;
-								int visits;
+								uint visits;
 								foreach (ii; 0..elements.length)
 								{
 									if (elements[ii].token == GROUP && visits++ == id)
@@ -343,7 +504,11 @@ public:
 						}
 						else
 						{
-							element.str = cache.insert(pattern[i..++i])[0];
+							Tuple!(char*, uint) ins = cache.insert(pattern[i..(++i + 1)]);
+							element.str = ins[0];
+							element.length = ins[1];
+							element.min = 1;
+							element.max = 1;
 							if (pattern[i].isUpper)
 								element.modifiers |= EXCLUSIONARY;
 						}
@@ -351,61 +516,49 @@ public:
 					else
 					{
 						element.str = cache.insert(c)[0];
+						element.length = 1;
+						element.min = 1;
+						element.max = 1;
 					}
 					break;
 			}
-			if (element.token != BAD)
-				elements ~= element;
+			elements ~= element;
 		}
     }
 
 	string match(string text)
-	{
-		int i;
+	{ 
 		string match;
-		for (int ii; ii < text.length; ii++)
+		uint ti;
+		uint ei;
+		for (;ei < elements.length;)
 		{
-			Element element = elements[i];
-			ulong m = ii + element.min;
-			ulong r = ii + element.max;
-			for (;ii < r; ii++)
+			Element element = elements[ei];
+			if (element.token != ANCHOR_END && ti >= text.length)
+				return null;
+			
+			uint tci = ti;
+			if (element.fulfilled(this, text, ti))
 			{
-				/* if (ii >= m)
-					break; */
+				// temporary fix!
+				if (element.token == REFERENCE)
+					ti += element.elements[0].min;
 
-				if (ii >= text.length)
-				{
-					if (ii < m)
-						match = null;
-					break;
-				}
-
-				switch (element.token)
-				{
-					case CHARACTERS:
-						bool fail = true;
-						for (int iii; iii < element.length; iii++)
-						{
-							if (text[ii] == element.str[iii])
-								fail = false;
-						}
-
-						if (fail && ii < m)
-							return null;
-						else
-							match ~= text[ii];
-						break;
-					case ANCHOR_START:
-						if (ii != 0 && ((flags & MULTILINE) == 0 || ii < 2 || 
-							(text[ii - 2..ii] != "\r" && text[ii - 2..ii] != "\n" && text[ii - 2..ii] != "\f")))
-							return null;
-						break;
-					default:
-						break;
-				}
+				match ~= text[tci..(element.min != 0 ? ++ti : ti)];
+				ei++;
 			}
-			if (++i < elements.length)
-				return match;
+			else if (element.token == RESET)
+			{
+				match = null;
+			}
+			else if ((element.modifiers & ALTERNATE) == 0)
+			{
+				if (!elements[0].fulfilled(this, text, ti))
+					ti++;
+				
+				match = null;
+				ei = 0;
+			}
 		}
 		return match;
 	}

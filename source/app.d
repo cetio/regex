@@ -8,46 +8,62 @@ import std.algorithm;
 
 void main()
 {
-    auto regex = new Regex(r"^a%1%1", "");
-    foreach (element; regex.elements)
+    pragma(msg, ctRegex!(r"^a%1%1", "").match("aaa"));
+    /* foreach (element; regex.elements)
         writeln(element);
-    writeln(regex.match("aaa"));
+    writeln(regex.match("aaa")); */
 }
 
 public enum : ubyte
 {
     BAD,
     /// `(?...)`
+    /// Matches group ahead
     LOOKAHEAD,
     /// `(...<...)`
+    /// Matches group behind
     LOOKBEHIND,
     /// `[...]`
+    /// Stores a set of characters (matches any)
     CHARACTERS,
     /// `^`
+    /// Matches only if at the start of a line or the full text
     ANCHOR_START,
     /// `$`
+    /// Matches only if at the end of a line or the full text
     ANCHOR_END,
     /// `(...)`
+    /// Stores a set of elements
     GROUP,
     /// `.`
+    /// Matches any character
     ANY,
     /// ~`\gn`~ or `$n` (group) or `%n` (absolute)
+    /// Refers to a group or element
     REFERENCE,
     // Not used! Comments don't need to be parsed!
     // (?#...)
     //COMMENT
     /// `\K` `\Kn`
-    RESET
+    /// Resets match or group match
+    RESET,
+    /// `n->` or `<-n`
+    /// Moves the current text position
+    PUSH
 }
 
 public enum : ubyte
 {
+    /// No special rules, matches until the next element can match
     NONE = 0,
     /// `|`
+    /// If fails, the next element will attempt to match instead
     ALTERNATE = 1,
     /// `[^...]`
+    /// Matches only if no characters in the set match
     EXCLUSIONARY = 2,
     /// `{...}`
+    /// Has min/max
     QUANTIFIED = 4,
     // *
     //GREEDY = 8,
@@ -61,30 +77,34 @@ public enum : ubyte
     //CAPTURE = 64,
     //POSITIVE = 64,
     /// `(?:...)`
+    /// Acts as a group but does not capture match
     NONCAPTURE = 8,
     /// `(...!...)`
+    /// Matches if not matched
     NEGATIVE = 8,
     /// `...?`
+    /// Matches as few times as possible
     LAZY = 8,
     /// `...+`
+    /// Matches as many times as possible
     GREEDY = 16
 }
 
 public enum : ubyte
 {
-    // Match more than once
+    /// Match more than once
     GLOBAL = 2,
-    // ^ & $ match start & end
+    /// ^ & $ match start & end
     MULTILINE = 4,
-    // Case insensitive
+    /// Case insensitive
     INSENSITIVE = 8,
-    // Ignore whitespace
+    /// Ignore whitespace
     EXTENDED = 16,
-    // . matches \r\n\f
+    /// . matches \r\n\f
     SINGLELINE = 32
 }
 
-string marketEscapes(string str)
+pure string marketEscapes(string str)
 {
     string result;
     foreach (c; str)
@@ -104,7 +124,6 @@ string marketEscapes(string str)
     }
     return result;
 }
-
 
 private struct Element
 {
@@ -188,15 +207,16 @@ align(1):
         switch (this.token)
         {
             case BAD: token = "BAD"; break;
-            case LOOKAHEAD: token = "LOOKAHEAD"; break;
-            case LOOKBEHIND: token = "LOOKBEHIND"; break;
-            case CHARACTERS: token = "CHARACTERS"; break;
-            case ANCHOR_START: token = "ANCHOR_START"; break;
-            case ANCHOR_END: token = "ANCHOR_END"; break;
-            case GROUP: token = "GROUP"; break;
-            case ANY: token = "ANY"; break;
-            case REFERENCE: token = "REFERENCE"; break;
-            case RESET: token = "RESET"; break;
+            case LOOKAHEAD: token = "(.>...)"; break;
+            case LOOKBEHIND: token = "(?...)"; break;
+            case CHARACTERS: token = "[...]"; break;
+            case ANCHOR_START: token = "^"; break;
+            case ANCHOR_END: token = "$"; break;
+            case GROUP: token = "(...)"; break;
+            case ANY: token = "."; break;
+            case REFERENCE: token = "%$n"; break;
+            case RESET: token = "\\K"; break;
+            case PUSH: token = "<-n->"; break;
             default: token = this.token.to!string; break;
         }
 
@@ -323,12 +343,17 @@ private:
     }
 }
 
-bool mayQuantify(Element element)
+pure bool mayQuantify(Element element)
 {
     return (element.modifiers & QUANTIFIED) == 0;
 }
 
-string getArgument(string pattern, int start, char opener, char closer)
+pure bool shouldQuantify(Element element)
+{
+    return element.token != ANCHOR_START && element.token != ANCHOR_END && element.token != PUSH;
+}
+
+pure string getArgument(string pattern, int start, char opener, char closer)
 {
     int openers = 1;
     foreach (i; (start + 1)..pattern.length)
@@ -342,6 +367,15 @@ string getArgument(string pattern, int start, char opener, char closer)
             return pattern[(start + 1)..i];
     }
     return pattern[(start + 1)..pattern.length];
+}
+
+//alias ctRegex(string PATTERN, string FLAGS) = _ctRegex(PATTERN, FLAGS);
+private template ctRegex(string PATTERN, string FLAGS)
+{
+    Regex ctRegex()
+    {
+        return new Regex(PATTERN, FLAGS);
+    }
 }
 
 public class Regex
@@ -360,6 +394,9 @@ public:
             switch (c)
             {
                 case '+':
+                    if (!elements[$-1].shouldQuantify)
+                        continue;
+
                     if (elements[$-1].mayQuantify)
                     {
                         elements[$-1].min = 1;
@@ -372,6 +409,9 @@ public:
                     }
                     break;
                 case '*':
+                    if (!elements[$-1].shouldQuantify)
+                        continue;
+
                     if (!elements[$-1].mayQuantify)
                         continue;
 
@@ -380,6 +420,9 @@ public:
                     elements[$-1].modifiers |= QUANTIFIED;
                     break;
                 case '?':
+                    if (!elements[$-1].shouldQuantify)
+                        continue;
+
                     if (elements[$-1].mayQuantify)
                     {
                         elements[$-1].min = 0;
@@ -392,6 +435,9 @@ public:
                     }
                     break;
                 case '{':
+                    if (!elements[$-1].shouldQuantify)
+                        continue;
+
                     if (!elements[$-1].mayQuantify)
                         continue;
 

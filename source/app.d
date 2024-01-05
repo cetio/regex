@@ -8,7 +8,10 @@ import std.algorithm;
 
 void main()
 {
-    pragma(msg, cache.table);
+    // FIX!
+    // Figure out why not working
+    // Add escape (double slash)
+    writeln(regex!(r"\sa", "").match!("\va"));
     /* foreach (element; regex.elements)
         writeln(element);
     writeln(regex.match("aaa")); */
@@ -141,7 +144,7 @@ align(1):
     union
     {
         /// Characters mapped (like in a character set or literal)
-        /// eg: `&cache.table[0]`
+        /// eg: `&table[0]`
         char* str;
         /// Elements mapped (like in a group or reference)
         Element* elements;
@@ -153,13 +156,7 @@ align(1):
     /// eg: `1`
     uint max;
 
-    this (ubyte token, char* str)
-    {
-        this.token = token;
-        this.str = str;
-    }
-
-    bool fulfilled(ubyte flags, string text, ref uint index)
+    pure bool fulfilled(ubyte flags, string text, ref uint index)
     {
         switch (token)
         {
@@ -200,7 +197,7 @@ align(1):
         }
     }
 
-    string toString() const
+    pure string toString() const
     {
         string token;
         string modifiers;
@@ -261,26 +258,12 @@ align(1):
     }
 }
 
-private alias cache = Cache!();
-private template Cache()
+private template localCache()
 {
-protected:
     char[] table = [ 0 ];
     Tuple!(char*, uint)[string] lookups;
 
-private:
-    static this()
-    {
-        lookups["\\w"] = insert("a-zA-Z0-9_");
-        lookups["\\d"] = insert("0-9");
-        lookups["\\s"] = insert(" \t\r\n\f");
-        lookups["\\h"] = insert(" \t");
-        lookups["\\v"] = insert("\v");
-        lookups["\\b"] = insert("\b");
-        lookups["\\a"] = insert("\a");
-        lookups["\\0"] = insert("\0");
-    }
-
+    /// Pure, must be from a mixin template!
     Tuple!(char*, uint) insert(string pattern)
     {
         if (pattern in lookups)
@@ -330,16 +313,40 @@ private:
         return lookups[pattern] = Tuple!(char*, uint)(cur, cast(uint)(table.length - curlen));
     }
 
+    /// Pure, must be from a mixin template!
     Tuple!(char*, uint) insert(char c)
     {
         foreach (uint i; 0..cast(uint)table.length)
         {
             if (table[i] == c)
-                return Tuple!(char*, uint)(&table[i], 1);
+            return Tuple!(char*, uint)(&table[i], 1);
         }
 
         table ~= c;
         return Tuple!(char*, uint)(&table[$-1], 1);
+    }
+}
+
+private alias cache = Cache!();
+private template Cache()
+{
+private:
+    mixin localCache;
+
+    static this()
+    {
+        lookups["\\w"] = insert("a-zA-Z0-9_");
+        lookups["\\d"] = insert("0-9");
+        lookups["\\s"] = insert(" \t\r\n\f");
+        lookups["\\h"] = insert(" \t");
+        lookups["\\t"] = insert("\t");
+        lookups["\\r"] = insert("\r");
+        lookups["\\n"] = insert("\n");
+        lookups["\\f"] = insert("\f");
+        lookups["\\v"] = insert("\v");
+        lookups["\\b"] = insert("\b");
+        lookups["\\a"] = insert("\a");
+        lookups["\\0"] = insert("\0");
     }
 }
 
@@ -369,12 +376,30 @@ pure string getArgument(string pattern, int start, char opener, char closer)
     return pattern[(start + 1)..pattern.length];
 }
 
-//alias ctRegex(string PATTERN, string FLAGS) = _ctRegex(PATTERN, FLAGS);
-public template Regex(string PATTERN, string FLAGS)
+/** Provides interface for compile-time regex.
+   
+    Remarks:
+        Does not benefit from caching, so use the `Regex` class instead when possible.
+*/
+public template regex(string PATTERN, string FLAGS)
 {
 public:
-    string match(string TEXT)()
+    pure string match(string TEXT)()
     {
+        mixin localCache;
+        lookups["\\w"] = insert("a-zA-Z0-9_");
+        lookups["\\d"] = insert("0-9");
+        lookups["\\s"] = insert(" \t\r\n\f");
+        lookups["\\h"] = insert(" \t");
+        lookups["\\t"] = insert("\t");
+        lookups["\\r"] = insert("\r");
+        lookups["\\n"] = insert("\n");
+        lookups["\\f"] = insert("\f");
+        lookups["\\v"] = insert("\v");
+        lookups["\\b"] = insert("\b");
+        lookups["\\a"] = insert("\a");
+        lookups["\\0"] = insert("\0");
+
         Element[] elements;
         ubyte flags;
         for (int i; i < PATTERN.length; i++)
@@ -464,7 +489,7 @@ public:
                         i++;
                     }
                     string arg = PATTERN.getArgument(i, '[', ']');
-                    Tuple!(char*, uint) ins = cache.insert(arg);
+                    Tuple!(char*, uint) ins = insert(arg);
                     element.str = ins[0];
                     element.length = ins[1];
                     i += arg.length + 1;
@@ -540,7 +565,7 @@ public:
                         }
                         else
                         {
-                            Tuple!(char*, uint) ins = cache.insert(PATTERN[i..(++i + 1)]);
+                            Tuple!(char*, uint) ins = insert(PATTERN[i..(++i + 1)]);
                             element.str = ins[0];
                             element.length = ins[1];
                             element.min = 1;
@@ -551,7 +576,7 @@ public:
                     }
                     else
                     {
-                        element.str = cache.insert(c)[0];
+                        element.str = insert(c)[0];
                         element.length = 1;
                         element.min = 1;
                         element.max = 1;
@@ -560,7 +585,7 @@ public:
             }
             elements ~= element;
         }
-        
+
         string match;
         uint ti;
         uint ei;
@@ -573,10 +598,6 @@ public:
             uint tci = ti;
             if (element.fulfilled(flags, TEXT, ti))
             {
-                // temporary fix!
-                if (element.token == REFERENCE)
-                    ti += element.elements[0].min;
-
                 match ~= TEXT[tci..(element.min != 0 ? ++ti : ti)];
                 ei++;
             }

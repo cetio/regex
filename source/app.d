@@ -8,7 +8,7 @@ import std.algorithm;
 
 void main()
 {
-    pragma(msg, ctRegex!(r"^a%1%1", "").match("aaa"));
+    pragma(msg, cache.table);
     /* foreach (element; regex.elements)
         writeln(element);
     writeln(regex.match("aaa")); */
@@ -159,7 +159,7 @@ align(1):
         this.str = str;
     }
 
-    bool fulfilled(Regex regex, string text, ref uint index)
+    bool fulfilled(ubyte flags, string text, ref uint index)
     {
         switch (token)
         {
@@ -179,22 +179,22 @@ align(1):
                 return (modifiers & EXCLUSIONARY) != 0 ? !match : match;
                 break;
             case ANCHOR_START:
-                return index == 0 || ((regex.flags & MULTILINE) != 0 && 
+                return index == 0 || ((flags & MULTILINE) != 0 && 
                     (text[index - 1] == '\r' || text[index - 1] == '\n' || text[index - 1] == '\f'));
             case ANCHOR_END:
-                return index >= text.length || ((regex.flags & MULTILINE) != 0 && 
+                return index >= text.length || ((flags & MULTILINE) != 0 && 
                     (text[index + 1] == '\r' || text[index + 1] == '\n' || text[index + 1] == '\f' || text[index + 1] == '\0'));
             case GROUP:
                 foreach (i; 0..length)
                 {
-                    if (!elements[i].fulfilled(regex, text, index))
+                    if (!elements[i].fulfilled(flags, text, index))
                         return false;
                 }
                 return true;
             case ANY:
-                return ((regex.flags & SINGLELINE) != 0 || (text[index] != '\r' && text[index] != '\n' && text[index] != '\f'));
+                return ((flags & SINGLELINE) != 0 || (text[index] != '\r' && text[index] != '\n' && text[index] != '\f'));
             case REFERENCE:
-                return elements[0].fulfilled(regex, text, index);
+                return elements[0].fulfilled(flags, text, index);
             default:
                 return false;
         }
@@ -370,27 +370,17 @@ pure string getArgument(string pattern, int start, char opener, char closer)
 }
 
 //alias ctRegex(string PATTERN, string FLAGS) = _ctRegex(PATTERN, FLAGS);
-private template ctRegex(string PATTERN, string FLAGS)
+public template Regex(string PATTERN, string FLAGS)
 {
-    Regex ctRegex()
-    {
-        return new Regex(PATTERN, FLAGS);
-    }
-}
-
-public class Regex
-{
-protected:
-    Element[] elements;
-    ubyte flags;
-
 public:
-    this(string pattern, string flags)
+    string match(string TEXT)()
     {
-        for (int i; i < pattern.length; i++)
+        Element[] elements;
+        ubyte flags;
+        for (int i; i < PATTERN.length; i++)
         {
             Element element;
-            char c = pattern[i];
+            char c = PATTERN[i];
             switch (c)
             {
                 case '+':
@@ -441,7 +431,7 @@ public:
                     if (!elements[$-1].mayQuantify)
                         continue;
 
-                    string arg = pattern.getArgument(i, '{', '}');
+                    string arg = PATTERN.getArgument(i, '{', '}');
                     string[] args = arg.split("..");
                     if (args.length == 1)
                     {
@@ -468,12 +458,12 @@ public:
                     element.token = CHARACTERS;
                     element.min = 1;
                     element.max = 1;
-                    if (i + 1 < pattern.length && pattern[i + 1] == '^')
+                    if (i + 1 < PATTERN.length && PATTERN[i + 1] == '^')
                     {
                         element.modifiers |= EXCLUSIONARY;
                         i++;
                     }
-                    string arg = pattern.getArgument(i, '[', ']');
+                    string arg = PATTERN.getArgument(i, '[', ']');
                     Tuple!(char*, uint) ins = cache.insert(arg);
                     element.str = ins[0];
                     element.length = ins[1];
@@ -483,11 +473,11 @@ public:
                     element.token = ANCHOR_START;
                     break;
                 case '%':
-                    if (i + 1 < pattern.length && pattern[i + 1].isDigit)
+                    if (i + 1 < PATTERN.length && PATTERN[i + 1].isDigit)
                     {
                         string rid;
-                        while (i + 1 < pattern.length && pattern[i + 1].isDigit)
-                            rid ~= pattern[++i];
+                        while (i + 1 < PATTERN.length && PATTERN[i + 1].isDigit)
+                            rid ~= PATTERN[++i];
                         uint id = rid.to!uint;
 
                         if (elements.length > id)
@@ -500,11 +490,11 @@ public:
                     }
                     break;
                 case '$':
-                    if (i + 1 < pattern.length && pattern[i + 1].isDigit)
+                    if (i + 1 < PATTERN.length && PATTERN[i + 1].isDigit)
                     {
                         string rid;
-                        while (i + 1 < pattern.length && pattern[i + 1].isDigit)
-                            rid ~= pattern[++i];
+                        while (i + 1 < PATTERN.length && PATTERN[i + 1].isDigit)
+                            rid ~= PATTERN[++i];
                         uint id = rid.to!uint;
                         uint visits;
                         foreach (ii; 0..elements.length)
@@ -524,17 +514,17 @@ public:
                     element.token = CHARACTERS;
                     // Will not be adding support for \gn
                     // Expected to use $n
-                    if (c == '\\' && i + 1 < pattern.length)
+                    if (c == '\\' && i + 1 < PATTERN.length)
                     {
-                        if (pattern[i..(i + 2)] == "\\K")
+                        if (PATTERN[i..(i + 2)] == "\\K")
                         {
                             i++;
                             element.token = RESET;
-                            if (i + 1 < pattern.length && pattern[i + 1].isDigit)
+                            if (i + 1 < PATTERN.length && PATTERN[i + 1].isDigit)
                             {
                                 string rid;
-                                while (i + 1 < pattern.length && pattern[i + 1].isDigit)
-                                    rid ~= pattern[++i];
+                                while (i + 1 < PATTERN.length && PATTERN[i + 1].isDigit)
+                                    rid ~= PATTERN[++i];
                                 uint id = rid.to!uint;
                                 uint visits;
                                 foreach (ii; 0..elements.length)
@@ -550,12 +540,12 @@ public:
                         }
                         else
                         {
-                            Tuple!(char*, uint) ins = cache.insert(pattern[i..(++i + 1)]);
+                            Tuple!(char*, uint) ins = cache.insert(PATTERN[i..(++i + 1)]);
                             element.str = ins[0];
                             element.length = ins[1];
                             element.min = 1;
                             element.max = 1;
-                            if (pattern[i].isUpper)
+                            if (PATTERN[i].isUpper)
                                 element.modifiers |= EXCLUSIONARY;
                         }
                     }
@@ -570,27 +560,24 @@ public:
             }
             elements ~= element;
         }
-    }
-
-    string match(string text)
-    { 
+        
         string match;
         uint ti;
         uint ei;
         for (;ei < elements.length;)
         {
             Element element = elements[ei];
-            if (element.token != ANCHOR_END && ti >= text.length)
+            if (element.token != ANCHOR_END && ti >= TEXT.length)
                 return null;
             
             uint tci = ti;
-            if (element.fulfilled(this, text, ti))
+            if (element.fulfilled(flags, TEXT, ti))
             {
                 // temporary fix!
                 if (element.token == REFERENCE)
                     ti += element.elements[0].min;
 
-                match ~= text[tci..(element.min != 0 ? ++ti : ti)];
+                match ~= TEXT[tci..(element.min != 0 ? ++ti : ti)];
                 ei++;
             }
             else if (element.token == RESET)
@@ -599,7 +586,7 @@ public:
             }
             else if ((element.modifiers & ALTERNATE) == 0)
             {
-                if (!elements[0].fulfilled(this, text, ti))
+                if (!elements[0].fulfilled(flags, TEXT, ti))
                     ti++;
                 
                 match = null;

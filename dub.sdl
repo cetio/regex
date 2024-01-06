@@ -1,4 +1,4 @@
-name "ctgex"
+name "regex"
 description "Comptime regex"
 authors "cet"
 copyright "Copyright © 2024, cet"

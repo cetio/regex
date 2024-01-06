@@ -11,8 +11,8 @@ void main()
     // fix later!
     // [\w.]+
     // \w{3}.txt
-    writeln(regex!(r"\w+", GLOBAL | SINGLELINE).match!("abc.txt"));
-    writeln(new Regex(r"[abcdefg]{2}", GLOBAL).match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
+    writeln(regex!(r"\w{3}", GLOBAL).match!("abc"));
+    writeln(new Regex(r"[\w]{2}", GLOBAL).match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
     /* foreach (element; regex.elements)
         writeln(element);
     writeln(regex.match("aaa")); */
@@ -51,9 +51,12 @@ public enum : ubyte
     /// `\K` `\Kn`
     /// Resets match or group match
     RESET,
-    /// `n->` or `<-n`
-    /// Moves the current text position
-    PUSH
+    /// `n->` or `|->`
+    /// Moves the current text position forward
+    PUSHFW,
+    /// `<-n` or `<-|`
+    /// Moves the current text position backward
+    PUSHBW
 }
 
 public enum : ubyte
@@ -108,27 +111,6 @@ public enum : ubyte
     SINGLELINE = 32
 }
 
-pure string marketEscapes(string str)
-{
-    string result;
-    foreach (c; str)
-    {
-        switch (c)
-        {
-            case '\n': result ~= "\\n"; break;
-            case '\r': result ~= "\\r"; break;
-            case '\t': result ~= "\\t"; break;
-            case '\a': result ~= "\\a"; break;
-            case '\b': result ~= "\\b"; break;
-            case '\f': result ~= "\\f"; break;
-            case '\v': result ~= "\\v"; break;
-            case '\0': result ~= "\\0"; break;
-            default: result ~= c; break;
-        }
-    }
-    return result;
-}
-
 private struct Element
 {
 public:
@@ -152,17 +134,48 @@ align(1):
     /// eg: `1`
     uint max;
 
+    /++
+        Checks if the requirements of this element can be fulfilled in the given text.
+        
+        Params:
+        - `elements`: An array of elements defining the pattern to match.
+        - `next`: An unsigned integer representing the next element to check.
+        - `table`: A character array used for matching specific characters.
+        - `flags`: An unsigned byte containing flags for various matching conditions.
+        - `text`: The string in which the pattern is being searched.
+        - `idx`: A reference to an unsigned integer indicating the current index in the text.
+
+        Returns:
+            A boolean indicating if the requirements of this element can be fulfilled in the given text.
+
+        Remarks:
+            This function recursively checks elements against the provided text to determine if the pattern is fulfilled.
+            May modify `idx`.
+
+        Example:
+            ```d
+            Element[] elements = [/*...*/];
+            char[] table = "abc";
+            uint idx = 0;
+            uint next = 1;
+            ubyte flags = 0;
+            string text = "example text";
+            bool result = fulfilled(elements, next, table, flags, text, idx);
+            ```
+    +/
     pragma(inline, true);
-    // This code is very gross, I do not like it :(
-    pure bool fulfilled(Element[] elements, uint next, char[] table, ubyte flags, string text, ref uint idx)
+    pure @nogc bool fulfilled(Element[] elements, uint next, char[] table, ubyte flags, string text, ref uint idx)
     {
-        foreach (k; 0..(max == 0) ? 1 : max) 
+        foreach (k; 0..(max == 0 ? 1 : max)) 
         {
             if (k != 0)
                 idx++;
 
             if (token != ANCHOR_END && idx >= text.length)
+            {
+                idx--;
                 return k >= min;
+            }
 
             switch (token) 
             {
@@ -219,11 +232,7 @@ align(1):
                         }
                     }
 
-                    foreach (i; 0..length) 
-                    {
-                        if (elements[start].min != 0)
-                            idx++;
-                    }
+                    idx += elements[start].min * length;
                     break;
 
                 case ANY:
@@ -245,10 +254,16 @@ align(1):
                         return k >= min;
                     }
 
-                    if (elements[start].min != 0)
-                        idx++;
-
+                    idx += elements[start].min;
                     break;
+
+                case PUSHFW:
+                    idx += length;
+                    return true;
+
+                case PUSHBW:
+                    idx -= length;
+                    return true;
 
                 default:
                     return false;
@@ -352,18 +367,18 @@ private:
 }
 
 pragma(inline, true);
-pure bool mayQuantify(Element element)
+pure @nogc bool mayQuantify(Element element)
 {
     return (element.modifiers & QUANTIFIED) == 0;
 }
 
 pragma(inline, true);
-pure bool shouldQuantify(Element element)
+pure @nogc bool shouldQuantify(Element element)
 {
-    return element.token != ANCHOR_START && element.token != ANCHOR_END && element.token != PUSH;
+    return element.token != ANCHOR_START && element.token != ANCHOR_END && element.token != PUSHFW && element.token != PUSHBW;
 }
 
-pure string getArgument(string pattern, int start, char opener, char closer)
+pure @nogc string getArgument(string pattern, int start, char opener, char closer)
 {
     int openers = 1;
     foreach (i; (start + 1)..pattern.length)
@@ -386,8 +401,8 @@ pure string getArgument(string pattern, int start, char opener, char closer)
     an arbitrary function (`fn`).
 
     Parameters:
-        fn: The function used for character mapping.
-        pattern: The regex pattern to parse.
+        `fn`: The function used for character mapping.
+        `pattern`: The regex pattern to parse.
 
     Returns:
         An array of `Element` objects built from the given pattern.
@@ -397,7 +412,7 @@ pure string getArgument(string pattern, int start, char opener, char closer)
         auto elements = "a+b*c?".build!insert();
         ```
 */
-// TODO: \b \B \W \D \S \H \R \xnn (hex)
+// TODO: \b \B \R groups lookahead lookbehind
 pragma(inline, true);
 private Element[] build(alias fn)(string pattern)
 {
@@ -476,6 +491,13 @@ private Element[] build(alias fn)(string pattern)
                 break;
 
             case '|':
+                if (i + 2 < pattern.length && pattern[i..(i + 3)] == "|->")
+                {
+                    element.token = PUSHFW;
+                    element.length = 1;
+                    i += 2;
+                    break;
+                }
                 elements[$-1].modifiers |= ALTERNATE;
                 break;
 
@@ -544,7 +566,45 @@ private Element[] build(alias fn)(string pattern)
                 element.token = ANCHOR_END;
                 break;
 
+            case '<':
+                if (i + 2 < pattern.length && pattern[i + 1] == '-' && pattern[i + 2] == '|')
+                {
+                    element.token = PUSHBW;
+                    element.length = 1;
+                    i += 2;
+                    break;
+                }
+                else if (i + 2 < pattern.length && pattern[i + 1] == '-' && pattern[i + 2].isDigit)
+                {
+                    i++;
+                    uint len = 0;
+                    while (i + 1 < pattern.length && pattern[i + 1].isDigit)
+                        len = len * 10 + (pattern[++i] - '0');
+
+                    element.token = PUSHBW;
+                    element.length = len;
+                    break;
+                }
+                break;
+
             default:
+                if (c.isDigit)
+                {
+                    uint ci = i;
+                    uint len = c - '0';
+                    while (i + 1 < pattern.length && pattern[i + 1].isDigit)
+                        len = len * 10 + (pattern[++i] - '0');
+                    
+                    if (i + 2 < pattern.length && pattern[(i + 1)..(i + 3)] == "->")
+                    {
+                        element.token = PUSHFW;
+                        element.length = len;
+                        i += 2;
+                        break;
+                    }
+                    i = ci;
+                }
+
                 element.token = CHARACTERS;
                 // Will not be adding support for \gn
                 // Expected to use $n
@@ -584,16 +644,38 @@ private Element[] build(alias fn)(string pattern)
                         i++;
                         break;
                     }
+                    else if (pattern[i..(i + 2)] == r"\x" && i + 3 < pattern.length)
+                    {
+                        string hex = pattern[i + 2 .. i + 4];
+                        element.start = fn(cast(char)hex.to!ubyte(16))[0];
+                        element.length = 1;
+                        element.min = 1;
+                        element.max = 1;
+                        i += 3;
+                        break;
+                    }
                     // Any escape
                     else
                     {
-                        auto tup = fn(pattern[i..(++i + 1)]);
-                        element.start = tup[0];
-                        element.length = tup[1];
-                        element.min = 1;
-                        element.max = 1;
-                        if (pattern[i].isUpper)
-                            element.modifiers |= EXCLUSIONARY;
+                        string arg = pattern[i..(++i + 1)];
+                        switch (arg)
+                        {
+                            case r"\W", r"\D", r"\S", r"\H", r"\V":
+                                auto tup = fn(arg.toLower);
+                                element.start = tup[0];
+                                element.length = tup[1];
+                                element.min = 1;
+                                element.max = 1;
+                                element.modifiers |= EXCLUSIONARY;
+                                break;
+
+                            default:
+                                auto tup = fn(arg);
+                                element.start = tup[0];
+                                element.length = tup[1];
+                                element.min = 1;
+                                element.max = 1;
+                        }
                     }
                 }
                 else
@@ -612,36 +694,52 @@ private Element[] build(alias fn)(string pattern)
 }
 
 pragma(inline, true);
-private static pure string mmatch(Element[] elements, char[] table, ubyte flags, string text)
+private static pure @string mmatch(Element[] elements, char[] table, ubyte flags, string text)
 {
     string match;
-    uint ti;
-    uint ei;
-    for (;ei < elements.length;)
+    uint textIndex = 0;
+    uint elementIndex = 0;
+    
+    while (elementIndex < elements.length)
     {
-        Element element = elements[ei];
-        if (element.token != ANCHOR_END && ti >= text.length)
+        Element element = elements[elementIndex];
+        
+        if (element.token != ANCHOR_END && textIndex >= text.length)
             return null;
         
-        uint tci = ti;
-        if (element.fulfilled(elements, ei + 1, table, flags, text, ti))
+        uint textCopyIndex = textIndex;
+        
+        if (element.fulfilled(elements, elementIndex + 1, table, flags, text, textIndex))
         {
-            match ~= text[tci..(element.min != 0 ? ++ti : ti)];
-            ei++;
+            uint end = element.min != 0 ? ++textIndex : textCopyIndex;
+            match ~= text[textCopyIndex..end];
+            elementIndex++;
         }
         else if (element.token == RESET)
         {
             match = null;
         }
-        else if ((element.modifiers & ALTERNATE) == 0)
+        else if ((element.modifiers & ALTERNATE) != 0)
         {
-            if (!elements[0].fulfilled(elements, ei + 1, table, flags, text, ti))
-                ti++;
+            elementIndex++;
+            
+            if (element.fulfilled(elements, elementIndex + 1, table, flags, text, textIndex))
+            {
+                uint end = element.min != 0 ? ++textIndex : textCopyIndex;
+                match ~= text[textCopyIndex..end];
+                elementIndex++;
+            }
+        }
+        else
+        {
+            if (!elements[0].fulfilled(elements, elementIndex + 1, table, flags, text, textIndex))
+                textIndex++;
             
             match = null;
-            ei = 0;
+            elementIndex = 0;
         }
     }
+    
     return match;
 }
 
@@ -653,10 +751,10 @@ private static pure string mmatch(Element[] elements, char[] table, ubyte flags,
         Does not benefit from caching, so use the `Regex` class instead when possible.
 
     Examples:
-        ```
+        ```d
         regex!(r"\s", GLOBAL).match!("hey, I just met you, and this is crazy but here's my number, so call me, maybe");
         ```
-        ```
+        ```d
         Regex rg = regex!(r"\s", GLOBAL).ctor;
         ```
 */

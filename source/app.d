@@ -11,8 +11,8 @@ void main()
     // fix later!
     // [\w.]+
     // \w{3}.txt
-    writeln(regex!(r"\w{3}", GLOBAL).match!("abc"));
-    Regex re = regex!(r"\w+?", GLOBAL).ctor(); // or new Regex(r"\w{3}", GLOBAL)
+    writeln(regex!(r".{3}", GLOBAL).match!("abc"));
+    Regex re = regex!(r"\w+nd", GLOBAL).ctor(); // or new Regex(r"\w{3}", GLOBAL)
     writeln(re.match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
     /* foreach (element; regex.elements)
         writeln(element);
@@ -169,15 +169,19 @@ align(1):
     {
         foreach (k; 0..(max == 0 ? 1 : max)) 
         {
-            if (token != ANCHOR_END && idx >= text.length)
+            if (token != ANCHOR_END && idx + 1 >= text.length)
                 return k >= min;
 
             if ((modifiers & LAZY) != 0 && k >= min)
                 return true;
 
-            if ((modifiers & GREEDY) == 0 && (modifiers & LAZY) == 0 && 
-                k >= min && elements[next].fulfilled(elements, next + 1, table, flags, text, idx))
+            uint tix = idx + 1;
+            if (next < elements.length && (modifiers & GREEDY) == 0 && (modifiers & LAZY) == 0 && 
+                k >= min && elements[next].fulfilled(elements, next + 1, table, flags, text, tix))
+            {
+                idx = tix - 1;
                 return true;
+            }
 
             if (k != 0)
                 idx++;

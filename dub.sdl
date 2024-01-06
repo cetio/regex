@@ -1,5 +1,5 @@
 name "regex"
-description "Comptime regex"
+description "Comptime and runtime regex"
 authors "cet"
 copyright "Copyright © 2024, cet"
 license "MPL-2.0"

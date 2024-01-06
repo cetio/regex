@@ -12,7 +12,7 @@ void main()
     // [\w.]+
     // \w{3}.txt
     writeln(regex!(r"\w{3}", GLOBAL).match!("abc"));
-    Regex re = regex!(r"\w{3}", GLOBAL).ctor(); // or new Regex(r"\w{3}", GLOBAL)
+    Regex re = regex!(r"\w+?", GLOBAL).ctor(); // or new Regex(r"\w{3}", GLOBAL)
     writeln(re.match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
     /* foreach (element; regex.elements)
         writeln(element);
@@ -169,14 +169,18 @@ align(1):
     {
         foreach (k; 0..(max == 0 ? 1 : max)) 
         {
+            if (token != ANCHOR_END && idx >= text.length)
+                return k >= min;
+
+            if ((modifiers & LAZY) != 0 && k >= min)
+                return true;
+
+            if ((modifiers & GREEDY) == 0 && (modifiers & LAZY) == 0 && 
+                k >= min && elements[next].fulfilled(elements, next + 1, table, flags, text, idx))
+                return true;
+
             if (k != 0)
                 idx++;
-
-            if (token != ANCHOR_END && idx >= text.length)
-            {
-                idx--;
-                return k >= min;
-            }
 
             switch (token) 
             {

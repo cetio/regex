@@ -8,11 +8,8 @@ import std.algorithm;
 
 void main()
 {
-    // fix later!
-    // [\w.]+
-    // \w{3}.txt
-    writeln(regex!(r".{3}", GLOBAL).match!("abc"));
-    Regex re = regex!(r"\w+nd", GLOBAL).ctor(); // or new Regex(r"\w{3}", GLOBAL)
+    //writeln(regex!(r".", GLOBAL).match!("abc"));
+    Regex re = regex!(r".", GLOBAL).ctor(); // or new Regex(r"\w{3}", GLOBAL)
     writeln(re.match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
     /* foreach (element; regex.elements)
         writeln(element);
@@ -118,7 +115,7 @@ public:
 align(1):
     /// What kind of element is this?
     /// eg: `CHARACTERS`
-    ubyte token;
+    ubyte token = void;
     /// What are the special modifiers of this element?
     /// eg: `EXCLUSIONARY`
     ubyte modifiers;
@@ -139,12 +136,12 @@ align(1):
         Checks if the requirements of this element can be fulfilled in the given text.
         
         Params:
-    - `elements`: An array of elements defining the pattern to match.
-    - `next`: An unsigned integer representing the next element to check.
-    - `table`: A character array used for matching specific characters.
-    - `flags`: An unsigned byte containing flags for various matching conditions.
-    - `text`: The string in which the pattern is being searched.
-    - `idx`: A reference to an unsigned integer indicating the current index in the text.
+        - `elements`: An array of elements defining the pattern to match.
+        - `next`: An unsigned integer representing the next element to check.
+        - `table`: A character array used for matching specific characters.
+        - `flags`: An unsigned byte containing flags for various matching conditions.
+        - `text`: The string in which the pattern is being searched.
+        - `idx`: A reference to an unsigned integer indicating the current index in the text.
 
         Returns:
             A boolean indicating if the requirements of this element can be fulfilled in the given text.
@@ -167,23 +164,24 @@ align(1):
     pragma(inline, true);
     pure @nogc bool fulfilled(Element[] elements, uint next, char[] table, ubyte flags, string text, ref uint idx)
     {
+        const bool nGreedorLazy = next < elements.length && (modifiers & GREEDY) == 0 && (modifiers & LAZY) == 0;
+
         foreach (k; 0..(max == 0 ? 1 : max)) 
         {
-            if (token != ANCHOR_END && idx + 1 >= text.length)
+            if (token != ANCHOR_END && idx >= text.length)
                 return k >= min;
 
             if ((modifiers & LAZY) != 0 && k >= min)
                 return true;
 
             uint tix = idx + 1;
-            if (next < elements.length && (modifiers & GREEDY) == 0 && (modifiers & LAZY) == 0 && 
-                k >= min && elements[next].fulfilled(elements, next + 1, table, flags, text, tix))
+            if (nGreedorLazy && k >= min && elements[next].fulfilled(elements, next + 1, table, flags, text, tix))
             {
                 idx = tix - 1;
                 return true;
             }
 
-            if (k != 0)
+            if (k != 0 && idx + 1 < text.length)
                 idx++;
 
             switch (token) 
@@ -783,26 +781,24 @@ private Element[] build(alias fn)(string pattern)
         ```
 +/
 pragma(inline, true);
-private static pure @string mmatch(Element[] elements, char[] table, ubyte flags, string text)
+private static pure string mmatchFirst(Element[] elements, char[] table, ubyte flags, string text)
 {
     string match;
-    uint textIndex = 0;
-    uint elementIndex = 0;
-    
-    while (elementIndex < elements.length)
+    uint i;
+    uint ii;
+
+    while (ii < elements.length)
     {
-        Element element = elements[elementIndex];
+        Element element = elements[ii];
         
-        if (element.token != ANCHOR_END && textIndex >= text.length)
+        if (element.token != ANCHOR_END && i >= text.length)
             return null;
         
-        uint textCopyIndex = textIndex;
-        
-        if (element.fulfilled(elements, elementIndex + 1, table, flags, text, textIndex))
+        uint iv = i;
+        if (element.fulfilled(elements, ii + 1, table, flags, text, i))
         {
-            uint end = element.min != 0 ? ++textIndex : textCopyIndex;
-            match ~= text[textCopyIndex..end];
-            elementIndex++;
+            match ~= text[iv..(element.min != 0 ? ++i : iv)];
+            ii++;
         }
         else if (element.token == RESET)
         {
@@ -810,26 +806,79 @@ private static pure @string mmatch(Element[] elements, char[] table, ubyte flags
         }
         else if ((element.modifiers & ALTERNATE) != 0)
         {
-            elementIndex++;
+            ii++;
             
-            if (element.fulfilled(elements, elementIndex + 1, table, flags, text, textIndex))
+            if (element.fulfilled(elements, ii + 1, table, flags, text, i))
             {
-                uint end = element.min != 0 ? ++textIndex : textCopyIndex;
-                match ~= text[textCopyIndex..end];
-                elementIndex++;
+                match ~= text[iv..(element.min != 0 ? ++i : iv)];
+                ii++;
             }
         }
         else
         {
-            if (!elements[0].fulfilled(elements, elementIndex + 1, table, flags, text, textIndex))
-                textIndex++;
+            if (!elements[0].fulfilled(elements, ii + 1, table, flags, text, i))
+                i++;
             
             match = null;
-            elementIndex = 0;
+            ii = 0;
         }
     }
     
     return match;
+}
+
+/// ditto
+pragma(inline, true);
+private static string[] mmatch(Element[] elements, char[] table, ubyte flags, string text)
+{
+    string[] matches;
+    uint i;
+    uint ii;
+    uint iii;
+    
+    while (i < text.length + 1)
+    {
+        matches ~= null;
+        while (ii < elements.length)
+        {
+            Element element = elements[ii];
+            
+            if (element.token != ANCHOR_END && i >= text.length + 1)
+                return matches[0..$-1];
+            
+            uint iv = i;
+            if (element.fulfilled(elements, ii + 1, table, flags, text, i))
+            {
+                matches[iii] ~= text[iv..(element.min != 0 ? ++i : iv)];
+                ii++;
+            }
+            else if (element.token == RESET)
+            {
+                matches[iii] = null;
+            }
+            else if ((element.modifiers & ALTERNATE) != 0)
+            {
+                ii++;
+                
+                if (element.fulfilled(elements, ii + 1, table, flags, text, i))
+                {
+                    matches[iii] ~= text[iv..(element.min != 0 ? ++i : iv)];
+                    ii++;
+                }
+            }
+            else
+            {
+                if (!elements[0].fulfilled(elements, ii + 1, table, flags, text, i))
+                    i++;
+                
+                matches[iii] = null;
+                ii = 0;
+            }
+        }
+        ii = 0;
+        iii++;
+    }
+    return matches;
 }
 
 /** Provides interface for compile-time regex.
@@ -855,7 +904,7 @@ public:
         return new Regex(PATTERN, FLAGS);
     }
 
-    string match(string TEXT)()
+    pure string matchFirst(string TEXT)()
     {
         mixin localCache;
         lookups["\\w"] = insert("a-zA-Z0-9_");
@@ -871,9 +920,27 @@ public:
         lookups["\\a"] = insert("\a");
         lookups["\\0"] = insert("\0");
 
-        foreach (element; PATTERN.build!insert)
-            element.writeln;
-        return mmatch(PATTERN.build!insert, table, FLAGS, TEXT);
+        return mmatchFirst(PATTERN.build!insert, table, FLAGS, TEXT);
+    }
+
+    pure string[] match(string TEXT)()
+    {
+        mixin localCache;
+        lookups["\\w"] = insert("a-zA-Z0-9_");
+        lookups["\\d"] = insert("0-9");
+        lookups["\\s"] = insert(" \t\r\n\f");
+        lookups["\\h"] = insert(" \t");
+        lookups["\\t"] = insert("\t");
+        lookups["\\r"] = insert("\r");
+        lookups["\\n"] = insert("\n");
+        lookups["\\f"] = insert("\f");
+        lookups["\\v"] = insert("\v");
+        lookups["\\b"] = insert("\b");
+        lookups["\\a"] = insert("\a");
+        lookups["\\0"] = insert("\0");
+
+        return null;
+        //return mmatch(PATTERN.build!insert, table, FLAGS, TEXT);
     }
 }
 
@@ -906,7 +973,12 @@ public:
         this.flags = flags;
     }
 
-    string match(string text)
+    string matchFirst(string text)
+    {
+        return mmatchFirst(elements, cache.table, flags, text);
+    }
+
+    string[] match(string text)
     {
         return mmatch(elements, cache.table, flags, text);
     }

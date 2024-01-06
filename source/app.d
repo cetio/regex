@@ -8,10 +8,8 @@ import std.algorithm;
 
 void main()
 {
-    // FIX!
-    // Figure out why not working
-    // Add escape (double slash)
-    writeln(regex!(r"\sa", "").match!("\va"));
+    writeln(regex!(r"\w%0", GLOBAL).match!("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
+    writeln(new Regex(r"\w{3}", GLOBAL).match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
     /* foreach (element; regex.elements)
         writeln(element);
     writeln(regex.match("aaa")); */
@@ -141,14 +139,9 @@ align(1):
     /// Number of characters or elements to be read during fulfillment
     /// eg: `3`
     uint length;
-    union
-    {
-        /// Characters mapped (like in a character set or literal)
-        /// eg: `&table[0]`
-        char* str;
-        /// Elements mapped (like in a group or reference)
-        Element* elements;
-    }
+    /// Characters mapped (like in a character set or literal)
+    /// Elements mapped (like in a group or reference)
+    uint start;
     /// Minimum times to require fulfillment
     /// eg: `1`
     uint min;
@@ -156,120 +149,97 @@ align(1):
     /// eg: `1`
     uint max;
 
-    pure bool fulfilled(ubyte flags, string text, ref uint index)
+    pragma(inline, true);
+    pure bool fulfilled(Element[] elements, char[] table, ubyte flags, string text, ref uint index)
     {
-        switch (token)
+        bool state;
+        foreach (k; 0..(min == 0 ? 1 : min))
         {
-            case BAD:
-                throw new Exception("Cannot fulfill a bad token, fix your regex or live with the consequences of your actions.");
-            case LOOKAHEAD:
-                return false;
-            case LOOKBEHIND:
-                return false;
-            case CHARACTERS:
-                bool match;
-                foreach (i; 0..length)
-                {
-                    if (str[i] == text[index])
-                        match = true;
-                }
-                return (modifiers & EXCLUSIONARY) != 0 ? !match : match;
-                break;
-            case ANCHOR_START:
-                return index == 0 || ((flags & MULTILINE) != 0 && 
-                    (text[index - 1] == '\r' || text[index - 1] == '\n' || text[index - 1] == '\f'));
-            case ANCHOR_END:
-                return index >= text.length || ((flags & MULTILINE) != 0 && 
-                    (text[index + 1] == '\r' || text[index + 1] == '\n' || text[index + 1] == '\f' || text[index + 1] == '\0'));
-            case GROUP:
-                foreach (i; 0..length)
-                {
-                    if (!elements[i].fulfilled(flags, text, index))
+            if (k != 0)
+                index++;
+                
+            switch (token)
+            {
+                case LOOKAHEAD:
+                    return false;
+                    
+                case LOOKBEHIND:
+                    return false;
+
+                case CHARACTERS:
+                    bool match;
+                    foreach (i; 0..length)
+                    {
+                        if (table[start + i] == text[index])
+                            match = true;
+                    }
+                    state = (modifiers & EXCLUSIONARY) != 0 ? !match : match;
+                    
+                    if (!state)
                         return false;
-                }
-                return true;
-            case ANY:
-                return ((flags & SINGLELINE) != 0 || (text[index] != '\r' && text[index] != '\n' && text[index] != '\f'));
-            case REFERENCE:
-                return elements[0].fulfilled(flags, text, index);
-            default:
-                return false;
+                    break;
+
+                case ANCHOR_START:
+                    return index == 0 || ((flags & MULTILINE) != 0 && 
+                        (text[index - 1] == '\r' || text[index - 1] == '\n' || text[index - 1] == '\f'));
+
+                case ANCHOR_END:
+                    return index >= text.length || ((flags & MULTILINE) != 0 && 
+                        (text[index + 1] == '\r' || text[index + 1] == '\n' || text[index + 1] == '\f' || text[index + 1] == '\0'));
+
+                case GROUP:
+                    foreach (i; 0..length)
+                    {
+                        if (!elements[start + i].fulfilled(elements, table, flags, text, index))
+                        {
+                            return false;
+                        }
+                        else
+                        {
+                            if (elements[start].min != 0)
+                                index++;
+                        }
+                            
+                    }
+                    state = true;
+                    break;
+
+                case ANY:
+                    state = ((flags & SINGLELINE) != 0 || (text[index] != '\r' && text[index] != '\n' && text[index] != '\f'));
+
+                    if (!state)
+                        return false;
+                    break;
+
+                case REFERENCE:
+                    state = elements[start].fulfilled(elements, table, flags, text, index);
+                    if (elements[start].min != 0)
+                        index++;
+
+                    if (!state)
+                        return false;
+                    break;
+
+                default:
+                    return false;
+            }
         }
-    }
-
-    pure string toString() const
-    {
-        string token;
-        string modifiers;
-        switch (this.token)
-        {
-            case BAD: token = "BAD"; break;
-            case LOOKAHEAD: token = "(.>...)"; break;
-            case LOOKBEHIND: token = "(?...)"; break;
-            case CHARACTERS: token = "[...]"; break;
-            case ANCHOR_START: token = "^"; break;
-            case ANCHOR_END: token = "$"; break;
-            case GROUP: token = "(...)"; break;
-            case ANY: token = "."; break;
-            case REFERENCE: token = "%$n"; break;
-            case RESET: token = "\\K"; break;
-            case PUSH: token = "<-n->"; break;
-            default: token = this.token.to!string; break;
-        }
-
-        if (this.modifiers == 0)
-            modifiers = "NONE";
-
-        if ((this.modifiers & ALTERNATE) != 0)
-            modifiers ~= modifiers.length != 0 
-                ? " | ALTERNATE" 
-                : "ALTERNATE";
-
-        if ((this.modifiers & EXCLUSIONARY) != 0)
-            modifiers ~= modifiers.length != 0 
-                ? " | EXCLUSIONARY" 
-                : "EXCLUSIONARY";
-
-        if ((this.modifiers & QUANTIFIED) != 0)
-            modifiers ~= modifiers.length != 0 
-                ? " | QUANTIFIED" 
-                : "QUANTIFIED";
-
-        if ((this.modifiers & NONCAPTURE) != 0)
-            modifiers ~= this.token == GROUP 
-                ? modifiers.length != 0 
-                    ? " | NEGATIVE" 
-                    : "NEGATIVE" 
-                : modifiers.length != 0 
-                    ? " | NONCAPTURE" 
-                    : "NONCAPTURE";
-        
-        if ((this.modifiers & LAZY) != 0)
-            modifiers ~= modifiers.length != 0 
-                ? " | LAZY"
-                : "LAZY";
-        
-        if ((this.modifiers & GREEDY) != 0)
-            modifiers ~= modifiers.length != 0 
-                ? " | GREEDY"
-                : "GREEDY";
-
-        return "\x1b[36m"~token~" "~modifiers~"\x1b[0m "~length.to!string~" [ onion: \x1b[36m"~(length == 0 ? "NULL" : str[0..length].to!string.marketEscapes())~"\x1b[0m ] "~min.to!string~" "~max.to!string;
+        return state;
     }
 }
 
 private template localCache()
 {
     char[] table = [ 0 ];
-    Tuple!(char*, uint)[string] lookups;
+    uint[2][string] lookups;
 
     /// Pure, must be from a mixin template!
-    Tuple!(char*, uint) insert(string pattern)
+    uint[2] insert(string pattern)
     {
         if (pattern in lookups)
             return lookups[pattern];
 
-        char* cur = &table[$-1] + char.sizeof;
+        uint cur = cast(uint)table.length;
         uint curlen = cast(uint)table.length;
         for (int i; i < pattern.length; i++)
         {
@@ -280,7 +250,7 @@ private template localCache()
                 if (i + 1 < pattern.length && pattern[i..(i + 1)] in lookups)
                 {
                     auto tup = lookups[pattern[i..++i]];
-                    pattern ~= tup[0][0..tup[1]];
+                    pattern ~= table[tup[0]..tup[1]];
                 }
 
                 continue;
@@ -291,14 +261,14 @@ private template localCache()
                 // and if so, simply do a lookup for that, but it seems highly inefficient
                 if (i + 4 < pattern.length && pattern[i + 3] == '\\')
                 {
-                    lookups[pattern[i..(i + 4)]] = Tuple!(char*, uint)(&table[$-1], (pattern[i + 3] + 1) - pattern[i]);
+                    lookups[pattern[i..(i + 4)]] = [cast(uint)table.length - 1, (pattern[i + 3] + 1) - pattern[i]];
                     // Iterate set (a-\z would expand to alpha)
                     foreach (char c; pattern[i]..(pattern[i += 3] + 1))
                         table ~= c;
                 }
                 else
                 {
-                    lookups[pattern[i..(i + 3)]] = Tuple!(char*, uint)(&table[$-1], (pattern[i + 2] + 1) - pattern[i]);
+                    lookups[pattern[i..(i + 3)]] = [cast(uint)table.length - 1, (pattern[i + 2] + 1) - pattern[i]];
                     // Iterate set (a-z would expand to alpha)
                     foreach (char c; pattern[i]..(pattern[i += 2] + 1))
                         table ~= c;
@@ -310,29 +280,30 @@ private template localCache()
             }
         }
 
-        return lookups[pattern] = Tuple!(char*, uint)(cur, cast(uint)(table.length - curlen));
+        return lookups[pattern] = [cur, cast(uint)(table.length - curlen)];
     }
 
     /// Pure, must be from a mixin template!
-    Tuple!(char*, uint) insert(char c)
+    uint[2] insert(char c)
     {
         foreach (uint i; 0..cast(uint)table.length)
         {
             if (table[i] == c)
-            return Tuple!(char*, uint)(&table[i], 1);
+                return [i, 1];
         }
 
         table ~= c;
-        return Tuple!(char*, uint)(&table[$-1], 1);
+        return [cast(uint)table.length - 1, 1];
     }
 }
 
 private alias cache = Cache!();
 private template Cache()
 {
-private:
+public:
     mixin localCache;
 
+private:
     static this()
     {
         lookups["\\w"] = insert("a-zA-Z0-9_");
@@ -350,11 +321,13 @@ private:
     }
 }
 
+pragma(inline, true);
 pure bool mayQuantify(Element element)
 {
     return (element.modifiers & QUANTIFIED) == 0;
 }
 
+pragma(inline, true);
 pure bool shouldQuantify(Element element)
 {
     return element.token != ANCHOR_START && element.token != ANCHOR_END && element.token != PUSH;
@@ -376,15 +349,294 @@ pure string getArgument(string pattern, int start, char opener, char closer)
     return pattern[(start + 1)..pattern.length];
 }
 
+/**
+    Builds an array of regex elements based on the provided pattern using a specified cache function.
+
+    This function is realistically pure but cannot be marked as pure due to its invocation of 
+    an arbitrary function (`fn`).
+
+    Parameters:
+        fn: The function used for character mapping.
+        pattern: The regex pattern to parse.
+
+    Returns:
+        An array of `Element` objects built from the given pattern.
+
+    Example Usage:
+        ```
+        auto elements = "a+b*c?".build!insert();
+        ```
+*/
+// TODO: \b \B \W \D \S \H \R \xnn (hex)
+pragma(inline, true);
+private Element[] build(alias fn)(string pattern)
+{
+    Element[] elements;
+    for (int i; i < pattern.length; i++)
+    {
+        Element element;
+        char c = pattern[i];
+        switch (c)
+        {
+            case '+':
+                if (!elements[$-1].shouldQuantify)
+                    continue;
+
+                if (elements[$-1].mayQuantify)
+                {
+                    elements[$-1].min = 1;
+                    elements[$-1].max = uint.max;
+                    elements[$-1].modifiers |= QUANTIFIED;
+                }
+                else
+                {
+                    elements[$-1].modifiers |= GREEDY;
+                }
+                break;
+
+            case '*':
+                if (!elements[$-1].shouldQuantify)
+                    continue;
+
+                if (!elements[$-1].mayQuantify)
+                    continue;
+
+                elements[$-1].min = 0;
+                elements[$-1].max = uint.max;
+                elements[$-1].modifiers |= QUANTIFIED;
+                break;
+
+            case '?':
+                if (!elements[$-1].shouldQuantify)
+                    continue;
+
+                if (elements[$-1].mayQuantify)
+                {
+                    elements[$-1].min = 0;
+                    elements[$-1].max = 1;
+                    elements[$-1].modifiers |= QUANTIFIED;
+                }
+                else 
+                {
+                    elements[$-1].modifiers |= LAZY;
+                }
+                break;
+
+            case '{':
+                if (!elements[$-1].shouldQuantify)
+                    continue;
+
+                if (!elements[$-1].mayQuantify)
+                    continue;
+
+                string arg = pattern.getArgument(i, '{', '}');
+                string[] args = arg.split("..");
+                if (args.length == 1)
+                {
+                    elements[$-1].min = args[0].to!uint;
+                    elements[$-1].max = args[0].to!uint;
+                }
+                else if (args.length == 2)
+                {
+                    elements[$-1].min = args[0].to!uint;
+                    elements[$-1].max = args[1].to!uint;
+                }
+                i += arg.length + 1;
+                elements[$-1].modifiers |= QUANTIFIED;
+                break;
+
+            case '|':
+                elements[$-1].modifiers |= ALTERNATE;
+                break;
+
+            case '.':
+                element.token = ANY;
+                element.min = 1;
+                element.max = 1;
+                break;
+
+            case '[':
+                element = Element(CHARACTERS, 1, 1);
+
+                if (i + 1 < pattern.length && pattern[i + 1] == '^')
+                {
+                    element.modifiers |= EXCLUSIONARY;
+                    i++;
+                }
+
+                auto tup = fn(pattern.getArgument(i, '[', ']'));
+                element.start = tup[0];
+                element.length = tup[1];
+                i += pattern.getArgument(i, '[', ']').length + 1;
+                break;
+
+            case '^':
+                element.token = ANCHOR_START;
+                break;
+
+            case '%':
+                if (i + 1 < pattern.length && pattern[i + 1].isDigit)
+                {
+                    uint id = 0;
+                    while (i + 1 < pattern.length && pattern[i + 1].isDigit)
+                        id = id * 10 + (pattern[++i] - '0');
+
+                    if (id < elements.length)
+                    {
+                        element.token = REFERENCE;
+                        element.length = 1;
+                        element.start = id;
+                    }
+                    break;
+                }
+                break;
+
+            case '$':
+                if (i + 1 < pattern.length && pattern[i + 1].isDigit)
+                {
+                    uint id = 0;
+                    while (i + 1 < pattern.length && pattern[i + 1].isDigit)
+                        id = id * 10 + (pattern[++i] - '0');
+
+                    for (uint ii = 0, visits = 0; ii < elements.length; ++ii)
+                    {
+                        if (elements[ii].token == GROUP && visits++ == id)
+                        {
+                            element.token = REFERENCE;
+                            element.length = 1;
+                            element.start = cast(uint)ii;
+                            break;
+                        }
+                    }
+                }
+                element.token = ANCHOR_END;
+                break;
+
+            default:
+                element.token = CHARACTERS;
+                // Will not be adding support for \gn
+                // Expected to use $n
+                if (c == '\\' && i + 1 < pattern.length)
+                {
+                    // Reset (local)
+                    if (pattern[i..(i + 2)] == r"\K")
+                    {
+                        i++;
+                        element.token = RESET;
+                        if (i + 1 < pattern.length && pattern[i + 1].isDigit)
+                        {
+                            uint id = 0;
+                            while (i + 1 < pattern.length && pattern[i + 1].isDigit)
+                                id = id * 10 + (pattern[++i] - '0');
+
+                            for (uint ii = 0, visits = 0; ii < elements.length; ++ii)
+                            {
+                                if (elements[ii].token == GROUP && visits++ == id)
+                                {
+                                    element.token = REFERENCE;
+                                    element.length = 1;
+                                    element.start = cast(uint)ii;
+                                    break;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    // Escaped escape
+                    else if (pattern[i..(i + 2)] == r"\\")
+                    {
+                        element.start = fn(c)[0];
+                        element.length = 1;
+                        element.min = 1;
+                        element.max = 1;
+                        i++;
+                        break;
+                    }
+                    // Any escape
+                    else
+                    {
+                        auto tup = fn(pattern[i..(++i + 1)]);
+                        element.start = tup[0];
+                        element.length = tup[1];
+                        element.min = 1;
+                        element.max = 1;
+                        if (pattern[i].isUpper)
+                            element.modifiers |= EXCLUSIONARY;
+                    }
+                }
+                else
+                {
+                    element.start = fn(c)[0];
+                    element.length = 1;
+                    element.min = 1;
+                    element.max = 1;
+                }
+                break;
+        }
+        if (element.token != BAD)
+            elements ~= element;
+    }
+    return elements;
+}
+
+pragma(inline, true);
+private static pure string mmatch(Element[] elements, char[] table, ubyte flags, string text)
+{
+    string match;
+    uint ti;
+    uint ei;
+    for (;ei < elements.length;)
+    {
+        Element element = elements[ei];
+        if (element.token != ANCHOR_END && ti >= text.length)
+            return null;
+        
+        uint tci = ti;
+        if (element.fulfilled(elements, table, flags, text, ti))
+        {
+            match ~= text[tci..(element.min != 0 ? ++ti : ti)];
+            ei++;
+        }
+        else if (element.token == RESET)
+        {
+            match = null;
+        }
+        else if ((element.modifiers & ALTERNATE) == 0)
+        {
+            if (!elements[0].fulfilled(elements, table, flags, text, ti))
+                ti++;
+            
+            match = null;
+            ei = 0;
+        }
+    }
+    return match;
+}
+
 /** Provides interface for compile-time regex.
    
+    Not to be confused with `Regex`, which is used for runtime regex generated at runtime.
+
     Remarks:
         Does not benefit from caching, so use the `Regex` class instead when possible.
+
+    Examples:
+        ```
+        regex!(r"\s", GLOBAL).match!("hey, I just met you, and this is crazy but here's my number, so call me, maybe");
+        ```
+        ```
+        Regex rg = regex!(r"\s", GLOBAL).ctor;
+        ```
 */
-public template regex(string PATTERN, string FLAGS)
+public template regex(string PATTERN, ubyte FLAGS)
 {
 public:
-    pure string match(string TEXT)()
+    Regex ctor()
+    {
+        return new Regex(PATTERN, FLAGS);
+    }
+
+    string match(string TEXT)()
     {
         mixin localCache;
         lookups["\\w"] = insert("a-zA-Z0-9_");
@@ -400,220 +652,43 @@ public:
         lookups["\\a"] = insert("\a");
         lookups["\\0"] = insert("\0");
 
-        Element[] elements;
-        ubyte flags;
-        for (int i; i < PATTERN.length; i++)
-        {
-            Element element;
-            char c = PATTERN[i];
-            switch (c)
-            {
-                case '+':
-                    if (!elements[$-1].shouldQuantify)
-                        continue;
+        foreach (element; PATTERN.build!insert)
+            element.writeln;
+        return mmatch(PATTERN.build!insert, table, FLAGS, TEXT);
+    }
+}
 
-                    if (elements[$-1].mayQuantify)
-                    {
-                        elements[$-1].min = 1;
-                        elements[$-1].max = uint.max;
-                        elements[$-1].modifiers |= QUANTIFIED;
-                    }
-                    else
-                    {
-                        elements[$-1].modifiers |= GREEDY;
-                    }
-                    break;
-                case '*':
-                    if (!elements[$-1].shouldQuantify)
-                        continue;
+/** Provides interface for runtime regex.
+   
+    Not to be confused with `regex`, which is used for building or executing comptime regex.
 
-                    if (!elements[$-1].mayQuantify)
-                        continue;
+    Remarks:
+        May be built at compile time with regex!(PATTERN, FLAGS).ctor.
+    
+    Examples:
+        ```
+        Regex rg = new Regex(r"[ab]", GLOBAL);
+        writeln(rg.match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
+        ```
+*/
+public class Regex
+{
+private:
+    Element[] elements;
+    ubyte flags;
 
-                    elements[$-1].min = 0;
-                    elements[$-1].max = uint.max;
-                    elements[$-1].modifiers |= QUANTIFIED;
-                    break;
-                case '?':
-                    if (!elements[$-1].shouldQuantify)
-                        continue;
+public:
+    
+    this(string pattern, ubyte flags)
+    {
+        this.elements = pattern.build!(cache.insert);
+        foreach (element; pattern.build!(cache.insert))
+            element.writeln;
+        this.flags = flags;
+    }
 
-                    if (elements[$-1].mayQuantify)
-                    {
-                        elements[$-1].min = 0;
-                        elements[$-1].max = 1;
-                        elements[$-1].modifiers |= QUANTIFIED;
-                    }
-                    else 
-                    {
-                        elements[$-1].modifiers |= LAZY;
-                    }
-                    break;
-                case '{':
-                    if (!elements[$-1].shouldQuantify)
-                        continue;
-
-                    if (!elements[$-1].mayQuantify)
-                        continue;
-
-                    string arg = PATTERN.getArgument(i, '{', '}');
-                    string[] args = arg.split("..");
-                    if (args.length == 1)
-                    {
-                        elements[$-1].min = args[0].to!uint;
-                        elements[$-1].max = args[0].to!uint;
-                    }
-                    else if (args.length == 2)
-                    {
-                        elements[$-1].min = args[0].to!uint;
-                        elements[$-1].max = args[1].to!uint;
-                    }
-                    i += arg.length + 1;
-                    elements[$-1].modifiers |= QUANTIFIED;
-                    break;
-                case '|':
-                    elements[$-1].modifiers |= ALTERNATE;
-                    break;
-                case '.':
-                    element.token = ANY;
-                    element.min = 1;
-                    element.max = 1;
-                    break;
-                case '[':
-                    element.token = CHARACTERS;
-                    element.min = 1;
-                    element.max = 1;
-                    if (i + 1 < PATTERN.length && PATTERN[i + 1] == '^')
-                    {
-                        element.modifiers |= EXCLUSIONARY;
-                        i++;
-                    }
-                    string arg = PATTERN.getArgument(i, '[', ']');
-                    Tuple!(char*, uint) ins = insert(arg);
-                    element.str = ins[0];
-                    element.length = ins[1];
-                    i += arg.length + 1;
-                    break;
-                case '^':
-                    element.token = ANCHOR_START;
-                    break;
-                case '%':
-                    if (i + 1 < PATTERN.length && PATTERN[i + 1].isDigit)
-                    {
-                        string rid;
-                        while (i + 1 < PATTERN.length && PATTERN[i + 1].isDigit)
-                            rid ~= PATTERN[++i];
-                        uint id = rid.to!uint;
-
-                        if (elements.length > id)
-                        {
-                            element.token = REFERENCE;
-                            element.length = 1;
-                            element.elements = &elements[id];
-                        }
-                        break;
-                    }
-                    break;
-                case '$':
-                    if (i + 1 < PATTERN.length && PATTERN[i + 1].isDigit)
-                    {
-                        string rid;
-                        while (i + 1 < PATTERN.length && PATTERN[i + 1].isDigit)
-                            rid ~= PATTERN[++i];
-                        uint id = rid.to!uint;
-                        uint visits;
-                        foreach (ii; 0..elements.length)
-                        {
-                            if (elements[ii].token == GROUP && visits++ == id)
-                            {
-                                element.token = REFERENCE;
-                                element.length = 1;
-                                element.elements = &elements[ii];
-                            }
-                        }
-                        break;
-                    }
-                    element.token = ANCHOR_END;
-                    break;
-                default:
-                    element.token = CHARACTERS;
-                    // Will not be adding support for \gn
-                    // Expected to use $n
-                    if (c == '\\' && i + 1 < PATTERN.length)
-                    {
-                        if (PATTERN[i..(i + 2)] == "\\K")
-                        {
-                            i++;
-                            element.token = RESET;
-                            if (i + 1 < PATTERN.length && PATTERN[i + 1].isDigit)
-                            {
-                                string rid;
-                                while (i + 1 < PATTERN.length && PATTERN[i + 1].isDigit)
-                                    rid ~= PATTERN[++i];
-                                uint id = rid.to!uint;
-                                uint visits;
-                                foreach (ii; 0..elements.length)
-                                {
-                                    if (elements[ii].token == GROUP && visits++ == id)
-                                    {
-                                        element.length = 1;
-                                        element.elements = &elements[ii];
-                                    }
-                                }
-                            }
-                            break;
-                        }
-                        else
-                        {
-                            Tuple!(char*, uint) ins = insert(PATTERN[i..(++i + 1)]);
-                            element.str = ins[0];
-                            element.length = ins[1];
-                            element.min = 1;
-                            element.max = 1;
-                            if (PATTERN[i].isUpper)
-                                element.modifiers |= EXCLUSIONARY;
-                        }
-                    }
-                    else
-                    {
-                        element.str = insert(c)[0];
-                        element.length = 1;
-                        element.min = 1;
-                        element.max = 1;
-                    }
-                    break;
-            }
-            elements ~= element;
-        }
-
-        string match;
-        uint ti;
-        uint ei;
-        for (;ei < elements.length;)
-        {
-            Element element = elements[ei];
-            if (element.token != ANCHOR_END && ti >= TEXT.length)
-                return null;
-            
-            uint tci = ti;
-            if (element.fulfilled(flags, TEXT, ti))
-            {
-                match ~= TEXT[tci..(element.min != 0 ? ++ti : ti)];
-                ei++;
-            }
-            else if (element.token == RESET)
-            {
-                match = null;
-            }
-            else if ((element.modifiers & ALTERNATE) == 0)
-            {
-                if (!elements[0].fulfilled(flags, TEXT, ti))
-                    ti++;
-                
-                match = null;
-                ei = 0;
-            }
-        }
-        return match;
+    string match(string text)
+    {
+        return mmatch(elements, cache.table, flags, text);
     }
 }

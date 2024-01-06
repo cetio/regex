@@ -12,7 +12,8 @@ void main()
     // [\w.]+
     // \w{3}.txt
     writeln(regex!(r"\w{3}", GLOBAL).match!("abc"));
-    writeln(new Regex(r"[\w]{2}", GLOBAL).match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
+    Regex re = regex!(r"\w{3}", GLOBAL).ctor(); // or new Regex(r"\w{3}", GLOBAL)
+    writeln(re.match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
     /* foreach (element; regex.elements)
         writeln(element);
     writeln(regex.match("aaa")); */
@@ -138,12 +139,12 @@ align(1):
         Checks if the requirements of this element can be fulfilled in the given text.
         
         Params:
-        - `elements`: An array of elements defining the pattern to match.
-        - `next`: An unsigned integer representing the next element to check.
-        - `table`: A character array used for matching specific characters.
-        - `flags`: An unsigned byte containing flags for various matching conditions.
-        - `text`: The string in which the pattern is being searched.
-        - `idx`: A reference to an unsigned integer indicating the current index in the text.
+    - `elements`: An array of elements defining the pattern to match.
+    - `next`: An unsigned integer representing the next element to check.
+    - `table`: A character array used for matching specific characters.
+    - `flags`: An unsigned byte containing flags for various matching conditions.
+    - `text`: The string in which the pattern is being searched.
+    - `idx`: A reference to an unsigned integer indicating the current index in the text.
 
         Returns:
             A boolean indicating if the requirements of this element can be fulfilled in the given text.
@@ -370,18 +371,69 @@ private:
     }
 }
 
+/**
+    Determines if an Element may be quantified based on its modifiers.
+
+    Params:
+    - `element`: The Element to be checked for quantification.
+
+    Returns:
+        A boolean indicating whether the Element can be quantified.
+
+    Example:
+        ```d
+        Element myElement;
+        bool canQuantify = myElement.mayQuantify;
+        ```
+*/
 pragma(inline, true);
 pure @nogc bool mayQuantify(Element element)
 {
     return (element.modifiers & QUANTIFIED) == 0;
 }
 
+/**
+    Determines if an Element should be quantified based on its token type.
+
+    Params:
+    - `element`: The Element to be checked for quantification.
+
+    Returns:
+        A boolean indicating whether the Element should be quantified.
+
+    Example:
+        ```d
+        Element myElement;
+        bool shouldQuantify = myElement.shouldQuantify;
+        ```
+*/
 pragma(inline, true);
 pure @nogc bool shouldQuantify(Element element)
 {
     return element.token != ANCHOR_START && element.token != ANCHOR_END && element.token != PUSHFW && element.token != PUSHBW;
 }
 
+/**
+    Retrieves the substring enclosed by specified opening and closing characters in a string.
+
+    Params:
+    - `pattern`: The string containing the substring.
+    - `start`: The starting index of the substring.
+    - `opener`: The opening character delimiting the substring.
+    - `closer`: The closing character delimiting the substring.
+
+    Returns:
+        A string representing the substring enclosed by `opener` and `closer`.
+
+    Remarks:
+        Will account for additional openers and closers to get the correct substring.
+
+    Example:
+        ```d
+        string inputPattern = "Some string (with enclosed text)";
+        string argument = inputPattern.getArgument(10, '(', ')');
+        ```
+*/
 pure @nogc string getArgument(string pattern, int start, char opener, char closer)
 {
     int openers = 1;
@@ -404,7 +456,7 @@ pure @nogc string getArgument(string pattern, int start, char opener, char close
     This function is realistically pure but cannot be marked as pure due to its invocation of 
     an arbitrary function (`fn`).
 
-    Parameters:
+    Params:
         `fn`: The function used for character mapping.
         `pattern`: The regex pattern to parse.
 
@@ -697,6 +749,31 @@ private Element[] build(alias fn)(string pattern)
     return elements;
 }
 
+/++
+    Matches the elements against the text and returns any match.
+
+    Params:
+    - `elements`: An array of elements defining the pattern to match against the text.
+    - `table`: A character array used for matching specific characters.
+    - `flags`: An unsigned byte containing flags for various matching conditions.
+    - `text`: The string in which the pattern is being searched.
+
+    Returns:
+        Matched string, or null.
+
+    Remarks:
+        This function iterates through the provided elements, attempting to match them against the given text.
+        It constructs a string based on the fulfilled conditions of the elements.
+
+    Example:
+        ```d
+        Element[] patternElements = [/*...*/];
+        char[] matchingTable = "abc";
+        ubyte matchingFlags = 0;
+        string inputText = "Example text to match";
+        string result = mmatch(patternElements, matchingTable, matchingFlags, inputText);
+        ```
++/
 pragma(inline, true);
 private static pure @string mmatch(Element[] elements, char[] table, ubyte flags, string text)
 {
@@ -759,7 +836,7 @@ private static pure @string mmatch(Element[] elements, char[] table, ubyte flags
         regex!(r"\s", GLOBAL).match!("hey, I just met you, and this is crazy but here's my number, so call me, maybe");
         ```
         ```d
-        Regex rg = regex!(r"\s", GLOBAL).ctor;
+        Regex re = regex!(r"\s", GLOBAL).ctor();
         ```
 */
 public template regex(string PATTERN, ubyte FLAGS)
@@ -797,11 +874,11 @@ public:
     Not to be confused with `regex`, which is used for building or executing comptime regex.
 
     Remarks:
-        May be built at compile time with regex!(PATTERN, FLAGS).ctor.
+        May be built at compile time with `regex!(string PATTERN, ubyte FLAGS).ctor()`.
     
     Examples:
         ```
-        Regex rg = new Regex(r"[ab]", GLOBAL);
+        Regex re = new Regex(r"[ab]", GLOBAL);
         writeln(rg.match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
         ```
 */

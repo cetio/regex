@@ -8,8 +8,9 @@ import std.algorithm;
 
 void main()
 {
-    writeln(regex!(r"\w%0", GLOBAL).match!("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
-    writeln(new Regex(r"\w{3}", GLOBAL).match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
+    // fix later!
+    writeln(regex!(r"\w{3}.txt", GLOBAL).match!("abc.txt"));
+    writeln(new Regex(r"[abcdefg]{3}", GLOBAL).match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
     /* foreach (element; regex.elements)
         writeln(element);
     writeln(regex.match("aaa")); */
@@ -20,10 +21,10 @@ public enum : ubyte
     BAD,
     /// `(?...)`
     /// Matches group ahead
-    LOOKAHEAD,
+    LOOK_AHEAD,
     /// `(...<...)`
     /// Matches group behind
-    LOOKBEHIND,
+    LOOK_BEHIND,
     /// `[...]`
     /// Stores a set of characters (matches any)
     CHARACTERS,
@@ -150,81 +151,108 @@ align(1):
     uint max;
 
     pragma(inline, true);
-    pure bool fulfilled(Element[] elements, char[] table, ubyte flags, string text, ref uint index)
+    // This code is very gross, I do not like it :(
+    pure bool fulfilled(Element[] elements, uint next, char[] table, ubyte flags, string text, ref uint idx)
     {
-        bool state;
-        foreach (k; 0..(min == 0 ? 1 : min))
+        foreach (k; 0..(max == 0) ? 1 : max) 
         {
             if (k != 0)
-                index++;
-                
-            switch (token)
+                idx++;
+
+            if (token != ANCHOR_END && idx >= text.length - 1)
+                return k >= min;
+
+            switch (token) 
             {
-                case LOOKAHEAD:
-                    return false;
-                    
-                case LOOKBEHIND:
+                case LOOK_AHEAD:
+                    uint currIdx = idx - 1;
+                    foreach (i; 0..length) 
+                    {
+                        if (!elements[start + i].fulfilled(elements, next, table, flags, text, idx)) 
+                        {
+                            if (k >= min)
+                                idx = currIdx;
+
+                            return k >= min;
+                        }
+                    }
+                    break;
+
+                case LOOK_BEHIND:
                     return false;
 
                 case CHARACTERS:
-                    bool match;
-                    foreach (i; 0..length)
+                    bool match = false;
+                    foreach (i; 0..length) 
                     {
-                        if (table[start + i] == text[index])
+                        if (table[start + i] == text[idx])
                             match = true;
                     }
-                    state = (modifiers & EXCLUSIONARY) != 0 ? !match : match;
                     
-                    if (!state)
-                        return false;
+                    if (((modifiers & EXCLUSIONARY) != 0) ? match : !match) 
+                    {
+                        if (k >= min)
+                            idx--;
+
+                        return k >= min;
+                    }
                     break;
 
                 case ANCHOR_START:
-                    return index == 0 || ((flags & MULTILINE) != 0 && 
-                        (text[index - 1] == '\r' || text[index - 1] == '\n' || text[index - 1] == '\f'));
+                    return idx == 0 || ((flags & MULTILINE) != 0 && (text[idx - 1] == '\r' || text[idx - 1] == '\n' || text[idx - 1] == '\f'));
 
                 case ANCHOR_END:
-                    return index >= text.length || ((flags & MULTILINE) != 0 && 
-                        (text[index + 1] == '\r' || text[index + 1] == '\n' || text[index + 1] == '\f' || text[index + 1] == '\0'));
+                    return idx >= text.length || ((flags & MULTILINE) != 0 && (text[idx + 1] == '\r' || text[idx + 1] == '\n' || text[idx + 1] == '\f' || text[idx + 1] == '\0'));
 
                 case GROUP:
-                    foreach (i; 0..length)
+                    uint currIdx = idx - 1;
+                    foreach (i; 0..length) 
                     {
-                        if (!elements[start + i].fulfilled(elements, table, flags, text, index))
+                        if (!elements[start + i].fulfilled(elements, next, table, flags, text, idx)) 
                         {
-                            return false;
+                            if (k >= min)
+                                idx = currIdx;
+
+                            return k >= min;
                         }
-                        else
-                        {
-                            if (elements[start].min != 0)
-                                index++;
-                        }
-                            
                     }
-                    state = true;
+
+                    foreach (i; 0..length) 
+                    {
+                        if (elements[start].min != 0)
+                            idx++;
+                    }
                     break;
 
                 case ANY:
-                    state = ((flags & SINGLELINE) != 0 || (text[index] != '\r' && text[index] != '\n' && text[index] != '\f'));
-
-                    if (!state)
-                        return false;
+                    if (!((flags & SINGLELINE) != 0 || (text[idx] != '\r' && text[idx] != '\n' && text[idx] != '\f'))) 
+                    {
+                        if (k >= min)
+                            idx--;
+                        
+                        return k >= min;
+                    }
                     break;
 
                 case REFERENCE:
-                    state = elements[start].fulfilled(elements, table, flags, text, index);
-                    if (elements[start].min != 0)
-                        index++;
+                    if (!elements[start].fulfilled(elements, next, table, flags, text, idx)) 
+                    {
+                        if (k >= min)
+                            idx--;
+                        
+                        return k >= min;
+                    }
 
-                    if (!state)
-                        return false;
+                    if (elements[start].min != 0)
+                        idx++;
+
                     break;
 
                 default:
                     return false;
             }
         }
-        return state;
+        return true;
     }
 }
 
@@ -456,17 +484,19 @@ private Element[] build(alias fn)(string pattern)
                 break;
 
             case '[':
-                element = Element(CHARACTERS, 1, 1);
-
                 if (i + 1 < pattern.length && pattern[i + 1] == '^')
                 {
                     element.modifiers |= EXCLUSIONARY;
                     i++;
                 }
 
+                element.token = CHARACTERS;
                 auto tup = fn(pattern.getArgument(i, '[', ']'));
                 element.start = tup[0];
                 element.length = tup[1];
+                element.min = 1;
+                element.max = 1;
+
                 i += pattern.getArgument(i, '[', ']').length + 1;
                 break;
 
@@ -592,7 +622,7 @@ private static pure string mmatch(Element[] elements, char[] table, ubyte flags,
             return null;
         
         uint tci = ti;
-        if (element.fulfilled(elements, table, flags, text, ti))
+        if (element.fulfilled(elements, ei + 1, table, flags, text, ti))
         {
             match ~= text[tci..(element.min != 0 ? ++ti : ti)];
             ei++;
@@ -603,7 +633,7 @@ private static pure string mmatch(Element[] elements, char[] table, ubyte flags,
         }
         else if ((element.modifiers & ALTERNATE) == 0)
         {
-            if (!elements[0].fulfilled(elements, table, flags, text, ti))
+            if (!elements[0].fulfilled(elements, ei + 1, table, flags, text, ti))
                 ti++;
             
             match = null;

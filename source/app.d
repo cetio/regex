@@ -8,7 +8,7 @@ import std.algorithm;
 
 void main()
 {
-    //writeln(regex!(r".", GLOBAL).match!("abc"));
+    writeln(regex!(r".", GLOBAL).match!("abc"));
     Regex re = regex!(r".", GLOBAL).ctor(); // or new Regex(r"\w{3}", GLOBAL)
     writeln(re.match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
     /* foreach (element; regex.elements)
@@ -829,7 +829,7 @@ private static pure string mmatchFirst(Element[] elements, char[] table, ubyte f
 
 /// ditto
 pragma(inline, true);
-private static string[] mmatch(Element[] elements, char[] table, ubyte flags, string text)
+private static pure string[] mmatch(Element[] elements, char[] table, ubyte flags, string text)
 {
     string[] matches;
     uint i;
@@ -939,8 +939,7 @@ public:
         lookups["\\a"] = insert("\a");
         lookups["\\0"] = insert("\0");
 
-        return null;
-        //return mmatch(PATTERN.build!insert, table, FLAGS, TEXT);
+        return mmatch(PATTERN.build!insert, table, FLAGS, TEXT);
     }
 }
 

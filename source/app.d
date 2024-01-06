@@ -232,7 +232,11 @@ align(1):
                         }
                     }
 
-                    idx += elements[start].min * length;
+                    foreach (i; 0..length) 
+                    {
+                        if (elements[start].min != 0)
+                            idx++;
+                    }
                     break;
 
                 case ANY:

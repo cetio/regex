@@ -5,12 +5,15 @@ import std.string;
 import std.conv;
 import std.ascii;
 import std.algorithm;
+import std.datetime;
+import std.regex;
 
 void main()
 {
-    writeln(regex!(r".", GLOBAL).match!("abc"));
-    Regex re = regex!(r".", GLOBAL).ctor(); // or new Regex(r"\w{3}", GLOBAL)
-    writeln(re.match("hey, I just met you, and this is crazy but here's my number, so call me, maybe"));
+    //writeln(regex!(r".", GLOBAL).matchFirst!("abc"));
+    //Regex re = new Regex(r"\w{4}...............................+?", GLOBAL);
+    Regex re = regex!(r"(hey)...++", GLOBAL | SINGLELINE).ctor();
+    writeln(re.match("hey, i just met you, and this is crazy, but here's my number, so call me maybe"));
     /* foreach (element; regex.elements)
         writeln(element);
     writeln(regex.match("aaa")); */
@@ -115,16 +118,17 @@ public:
 align(1):
     /// What kind of element is this?
     /// eg: `CHARACTERS`
-    ubyte token = void;
+    ubyte token;
     /// What are the special modifiers of this element?
     /// eg: `EXCLUSIONARY`
     ubyte modifiers;
-    /// Number of characters or elements to be read during fulfillment
-    /// eg: `3`
-    uint length;
     /// Characters mapped (like in a character set or literal)
     /// Elements mapped (like in a group or reference)
-    uint start;
+    union
+    {
+        string str;
+        Element[] elements;
+    }
     /// Minimum times to require fulfillment
     /// eg: `1`
     uint min;
@@ -153,47 +157,47 @@ align(1):
         Example:
             ```d
             Element[] elements = [/*...*/];
-            char[] table = "abc";
-            uint idx = 0;
+            uint i = 0;
             uint next = 1;
             ubyte flags = 0;
             string text = "example text";
-            bool result = fulfilled(elements, next, table, flags, text, idx);
+            bool result = fulfilled(elements, next, flags, text, i);
             ```
     +/
     pragma(inline, true);
-    pure @nogc bool fulfilled(Element[] elements, uint next, char[] table, ubyte flags, string text, ref uint idx)
+    bool fulfilled(Element[] glob, uint next, ubyte flags, string text, ref uint i)
     {
-        const bool nGreedorLazy = next < elements.length && (modifiers & GREEDY) == 0 && (modifiers & LAZY) == 0;
-
+        const bool hitNext = next < glob.length && (modifiers & GREEDY) == 0 && (modifiers & LAZY) == 0;
         foreach (k; 0..(max == 0 ? 1 : max)) 
         {
-            if (token != ANCHOR_END && idx >= text.length)
-                return k >= min;
-
+            // Match as little as possible
             if ((modifiers & LAZY) != 0 && k >= min)
                 return true;
-
-            uint tix = idx + 1;
-            if (nGreedorLazy && k >= min && elements[next].fulfilled(elements, next + 1, table, flags, text, tix))
+            
+            // Try to see if the next element can be fulfilled yet
+            uint ti = i + 1;
+            if (hitNext && k >= min && glob[next].fulfilled(glob, next + 1, flags, text, ti))
             {
-                idx = tix - 1;
+                i = ti - 1;
                 return true;
             }
 
-            if (k != 0 && idx + 1 < text.length)
-                idx++;
+            if (k != 0)
+                i++;
+
+            if (token != ANCHOR_END && i >= text.length)
+                return k >= min;
 
             switch (token) 
             {
                 case LOOK_AHEAD:
-                    uint currIdx = idx - 1;
-                    foreach (i; 0..length) 
+                    uint ci = i - 1;
+                    foreach (j; 0..elements.length) 
                     {
-                        if (!elements[start + i].fulfilled(elements, next, table, flags, text, idx)) 
+                        if (!elements[j].fulfilled(glob, next, flags, text, i)) 
                         {
                             if (k >= min)
-                                idx = currIdx;
+                                i = ci;
 
                             return k >= min;
                         }
@@ -205,75 +209,71 @@ align(1):
 
                 case CHARACTERS:
                     bool match = false;
-                    foreach (i; 0..length) 
+                    foreach (j; 0..str.length) 
                     {
-                        if (table[start + i] == text[idx])
+                        if (str[j] == text[i])
                             match = true;
                     }
                     
                     if (((modifiers & EXCLUSIONARY) != 0) ? match : !match) 
                     {
                         if (k >= min)
-                            idx--;
+                            i--;
 
                         return k >= min;
                     }
                     break;
 
                 case ANCHOR_START:
-                    return idx == 0 || ((flags & MULTILINE) != 0 && (text[idx - 1] == '\r' || text[idx - 1] == '\n' || text[idx - 1] == '\f'));
+                    return i == 0 || ((flags & MULTILINE) != 0 && (text[i - 1] == '\r' || text[i - 1] == '\n' || text[i - 1] == '\f'));
 
                 case ANCHOR_END:
-                    return idx >= text.length || ((flags & MULTILINE) != 0 && (text[idx + 1] == '\r' || text[idx + 1] == '\n' || text[idx + 1] == '\f' || text[idx + 1] == '\0'));
+                    return i >= text.length || ((flags & MULTILINE) != 0 && (text[i + 1] == '\r' || text[i + 1] == '\n' || text[i + 1] == '\f' || text[i + 1] == '\0'));
 
                 case GROUP:
-                    uint currIdx = idx - 1;
-                    foreach (i; 0..length) 
+                    uint curri = i - 1;
+                    foreach (j; 0..elements.length) 
                     {
-                        if (!elements[start + i].fulfilled(elements, next, table, flags, text, idx)) 
+                        if (!elements[j].fulfilled(elements, cast(uint)j + 1, flags, text, (elements[j].min != 0 ? i + 1 < text.length ? ++i : i : i))) 
                         {
+                            writeln(elements[j], " ", k, " ", i);
                             if (k >= min)
-                                idx = currIdx;
+                                i = curri;
 
                             return k >= min;
                         }
                     }
 
-                    foreach (i; 0..length) 
-                    {
-                        if (elements[start].min != 0)
-                            idx++;
-                    }
                     break;
 
                 case ANY:
-                    if ((flags & SINGLELINE) == 0 && (text[idx] == '\r' || text[idx] == '\n' || text[idx] == '\f')) 
+                    if ((flags & SINGLELINE) == 0 && (text[i] == '\r' || text[i] == '\n' || text[i] == '\f')) 
                     {
                         if (k >= min)
-                            idx--;
+                            i--;
                         
                         return k >= min;
                     }
                     break;
 
                 case REFERENCE:
-                    if (!elements[start].fulfilled(elements, next, table, flags, text, idx)) 
+                    if (!elements[0].fulfilled(glob, next, flags, text, i)) 
                     {
                         if (k >= min)
-                            idx--;
+                            i--;
                         
                         return k >= min;
                     }
 
-                    idx += elements[start].min;
+                    i += elements[0].min;
                     break;
 
                 case PUSHFW:
-                    idx += length;
+                    i += min;
                     return true;
 
                 case PUSHBW:
-                    idx -= length;
+                    i -= min;
                     return true;
 
                 default:
@@ -284,97 +284,52 @@ align(1):
     }
 }
 
-private template localCache()
+private string[string] lookups;
+
+static this()
 {
-    char[] table = [ 0 ];
-    uint[2][string] lookups;
-
-    /// Pure, must be from a mixin template!
-    uint[2] insert(string pattern)
-    {
-        if (pattern in lookups)
-            return lookups[pattern];
-
-        uint cur = cast(uint)table.length;
-        uint curlen = cast(uint)table.length;
-        for (int i; i < pattern.length; i++)
-        {
-            // Escape chars (does not do any actual validity checking, can escape anything)
-            if (pattern[i] == '\\')
-            {
-                // Checks for special escapes
-                if (i + 1 < pattern.length && pattern[i..(i + 1)] in lookups)
-                {
-                    auto tup = lookups[pattern[i..++i]];
-                    pattern ~= table[tup[0]..tup[1]];
-                }
-
-                continue;
-            }
-            else if (i + 1 < pattern.length && pattern[i + 1] == '-')
-            {
-                // Could hypothetically implement a check for if there is only 1 unexpanded pattern
-                // and if so, simply do a lookup for that, but it seems highly inefficient
-                if (i + 4 < pattern.length && pattern[i + 3] == '\\')
-                {
-                    lookups[pattern[i..(i + 4)]] = [cast(uint)table.length - 1, (pattern[i + 3] + 1) - pattern[i]];
-                    // Iterate set (a-\z would expand to alpha)
-                    foreach (char c; pattern[i]..(pattern[i += 3] + 1))
-                        table ~= c;
-                }
-                else
-                {
-                    lookups[pattern[i..(i + 3)]] = [cast(uint)table.length - 1, (pattern[i + 2] + 1) - pattern[i]];
-                    // Iterate set (a-z would expand to alpha)
-                    foreach (char c; pattern[i]..(pattern[i += 2] + 1))
-                        table ~= c;
-                }
-            }
-            else
-            {
-                table ~= pattern[i];
-            }
-        }
-
-        return lookups[pattern] = [cur, cast(uint)(table.length - curlen)];
-    }
-
-    /// Pure, must be from a mixin template!
-    uint[2] insert(char c)
-    {
-        foreach (uint i; 0..cast(uint)table.length)
-        {
-            if (table[i] == c)
-                return [i, 1];
-        }
-
-        table ~= c;
-        return [cast(uint)table.length - 1, 1];
-    }
+    lookups["\\w"] = expand("a-zA-Z0-9_", lookups);
+    lookups["\\d"] = expand("0-9", lookups);
+    lookups["\\s"] = expand(" \t\r\n\f", lookups);
+    lookups["\\h"] = expand(" \t", lookups);
+    lookups["\\t"] = expand("\t", lookups);
+    lookups["\\r"] = expand("\r", lookups);
+    lookups["\\n"] = expand("\n", lookups);
+    lookups["\\f"] = expand("\f", lookups);
+    lookups["\\v"] = expand("\v", lookups);
+    lookups["\\b"] = expand("\b", lookups);
+    lookups["\\a"] = expand("\a", lookups);
+    lookups["\\0"] = expand("\0", lookups);
 }
 
-private alias cache = Cache!();
-private template Cache()
+pure string expand(string str, ref string[string] lookups)
 {
-public:
-    mixin localCache;
+    if (str in lookups)
+        return lookups[str];
 
-private:
-    static this()
+    string ret;
+    int i = 0;
+    while (i < str.length)
     {
-        lookups["\\w"] = insert("a-zA-Z0-9_");
-        lookups["\\d"] = insert("0-9");
-        lookups["\\s"] = insert(" \t\r\n\f");
-        lookups["\\h"] = insert(" \t");
-        lookups["\\t"] = insert("\t");
-        lookups["\\r"] = insert("\r");
-        lookups["\\n"] = insert("\n");
-        lookups["\\f"] = insert("\f");
-        lookups["\\v"] = insert("\v");
-        lookups["\\b"] = insert("\b");
-        lookups["\\a"] = insert("\a");
-        lookups["\\0"] = insert("\0");
+        if (str[i] == '\\' && i + 1 < str.length && str[i..(i + 2)] in lookups)
+        {
+            ret ~= lookups[str[i..(i += 2)]];
+        }
+        else if (i + 2 < str.length && str[i + 1] == '-')
+        {
+            char start = str[i];
+            char end = str[i + 2];
+            foreach (c; start..(end + 1))
+                ret ~= c;
+            i += 3;
+        }
+        else
+        {
+            ret ~= str[i++];
+        }
     }
+    lookups[str] = ret;
+    return ret;
 }
 
 /**
@@ -471,12 +426,12 @@ pure @nogc string getArgument(string pattern, int start, char opener, char close
 
     Example Usage:
         ```
-        auto elements = "a+b*c?".build!insert();
+        auto elements = "a+b*c?".build!expand();
         ```
 */
 // TODO: \b \B \R groups lookahead lookbehind
 pragma(inline, true);
-private Element[] build(alias fn)(string pattern)
+private pure Element[] build(string pattern, string[string] lookups)
 {
     Element[] elements;
     for (int i; i < pattern.length; i++)
@@ -556,7 +511,7 @@ private Element[] build(alias fn)(string pattern)
                 if (i + 2 < pattern.length && pattern[i..(i + 3)] == "|->")
                 {
                     element.token = PUSHFW;
-                    element.length = 1;
+                    element.min = 1;
                     i += 2;
                     break;
                 }
@@ -577,9 +532,7 @@ private Element[] build(alias fn)(string pattern)
                 }
 
                 element.token = CHARACTERS;
-                auto tup = fn(pattern.getArgument(i, '[', ']'));
-                element.start = tup[0];
-                element.length = tup[1];
+                element.str = pattern.getArgument(i, '[', ']').expand(lookups);
                 element.min = 1;
                 element.max = 1;
 
@@ -600,8 +553,7 @@ private Element[] build(alias fn)(string pattern)
                     if (id < elements.length)
                     {
                         element.token = REFERENCE;
-                        element.length = 1;
-                        element.start = id;
+                        element.elements = [ elements[id] ];
                     }
                     break;
                 }
@@ -619,8 +571,7 @@ private Element[] build(alias fn)(string pattern)
                         if (elements[ii].token == GROUP && visits++ == id)
                         {
                             element.token = REFERENCE;
-                            element.length = 1;
-                            element.start = cast(uint)ii;
+                            element.elements = [ elements[ii] ];
                             break;
                         }
                     }
@@ -632,7 +583,7 @@ private Element[] build(alias fn)(string pattern)
                 if (i + 2 < pattern.length && pattern[i + 1] == '-' && pattern[i + 2] == '|')
                 {
                     element.token = PUSHBW;
-                    element.length = 1;
+                    element.min = 1;
                     i += 2;
                     break;
                 }
@@ -644,9 +595,16 @@ private Element[] build(alias fn)(string pattern)
                         len = len * 10 + (pattern[++i] - '0');
 
                     element.token = PUSHBW;
-                    element.length = len;
+                    element.min = len;
                     break;
                 }
+                break;
+
+            case '(':
+                string arg = pattern.getArgument(i, '(', ')');
+                element.token = GROUP;
+                element.elements = arg.build(lookups);
+                i += arg.length + 1;
                 break;
 
             default:
@@ -660,7 +618,7 @@ private Element[] build(alias fn)(string pattern)
                     if (i + 2 < pattern.length && pattern[(i + 1)..(i + 3)] == "->")
                     {
                         element.token = PUSHFW;
-                        element.length = len;
+                        element.min = len;
                         i += 2;
                         break;
                     }
@@ -688,8 +646,7 @@ private Element[] build(alias fn)(string pattern)
                                 if (elements[ii].token == GROUP && visits++ == id)
                                 {
                                     element.token = REFERENCE;
-                                    element.length = 1;
-                                    element.start = cast(uint)ii;
+                                    element.elements = [ elements[ii] ];
                                     break;
                                 }
                             }
@@ -699,8 +656,7 @@ private Element[] build(alias fn)(string pattern)
                     // Escaped escape
                     else if (pattern[i..(i + 2)] == r"\\")
                     {
-                        element.start = fn(c)[0];
-                        element.length = 1;
+                        element.str = c.to!string;
                         element.min = 1;
                         element.max = 1;
                         i++;
@@ -709,8 +665,7 @@ private Element[] build(alias fn)(string pattern)
                     else if (pattern[i..(i + 2)] == r"\x" && i + 3 < pattern.length)
                     {
                         string hex = pattern[i + 2 .. i + 4];
-                        element.start = fn(cast(char)hex.to!ubyte(16))[0];
-                        element.length = 1;
+                        element.str = (cast(char)hex.to!ubyte(16)).to!string;
                         element.min = 1;
                         element.max = 1;
                         i += 3;
@@ -723,18 +678,14 @@ private Element[] build(alias fn)(string pattern)
                         switch (arg)
                         {
                             case r"\W", r"\D", r"\S", r"\H", r"\V":
-                                auto tup = fn(arg.toLower);
-                                element.start = tup[0];
-                                element.length = tup[1];
+                                element.str = arg.toLower.expand(lookups);
                                 element.min = 1;
                                 element.max = 1;
                                 element.modifiers |= EXCLUSIONARY;
                                 break;
 
                             default:
-                                auto tup = fn(arg);
-                                element.start = tup[0];
-                                element.length = tup[1];
+                                element.str = arg.expand(lookups);
                                 element.min = 1;
                                 element.max = 1;
                         }
@@ -742,8 +693,7 @@ private Element[] build(alias fn)(string pattern)
                 }
                 else
                 {
-                    element.start = fn(c)[0];
-                    element.length = 1;
+                    element.str = c.to!string;
                     element.min = 1;
                     element.max = 1;
                 }
@@ -781,7 +731,7 @@ private Element[] build(alias fn)(string pattern)
         ```
 +/
 pragma(inline, true);
-private static pure string mmatchFirst(Element[] elements, char[] table, ubyte flags, string text)
+private static string mmatchFirst(Element[] elements, ubyte flags, string text)
 {
     string match;
     uint i;
@@ -795,9 +745,9 @@ private static pure string mmatchFirst(Element[] elements, char[] table, ubyte f
             return null;
         
         uint iv = i;
-        if (element.fulfilled(elements, ii + 1, table, flags, text, i))
+        if (element.fulfilled(elements, ii + 1, flags, text, i))
         {
-            match ~= text[iv..(element.min != 0 ? ++i : iv)];
+            match ~= text[iv..(element.min != 0 ? i + 1 < text.length ? ++i : i : i)];
             ii++;
         }
         else if (element.token == RESET)
@@ -808,15 +758,15 @@ private static pure string mmatchFirst(Element[] elements, char[] table, ubyte f
         {
             ii++;
             
-            if (element.fulfilled(elements, ii + 1, table, flags, text, i))
+            if (element.fulfilled(elements, ii + 1, flags, text, i))
             {
-                match ~= text[iv..(element.min != 0 ? ++i : iv)];
+                match ~= text[iv..(element.min != 0 ? i + 1 < text.length ? ++i : i : i)];
                 ii++;
             }
         }
         else
         {
-            if (!elements[0].fulfilled(elements, ii + 1, table, flags, text, i))
+            if (!elements[0].fulfilled(elements, ii + 1, flags, text, i))
                 i++;
             
             match = null;
@@ -829,14 +779,14 @@ private static pure string mmatchFirst(Element[] elements, char[] table, ubyte f
 
 /// ditto
 pragma(inline, true);
-private static pure string[] mmatch(Element[] elements, char[] table, ubyte flags, string text)
+private static string[] mmatch(Element[] elements, ubyte flags, string text)
 {
     string[] matches;
     uint i;
     uint ii;
     uint iii;
     
-    while (i < text.length + 1)
+    while (i < text.length)
     {
         matches ~= null;
         while (ii < elements.length)
@@ -847,9 +797,9 @@ private static pure string[] mmatch(Element[] elements, char[] table, ubyte flag
                 return matches[0..$-1];
             
             uint iv = i;
-            if (element.fulfilled(elements, ii + 1, table, flags, text, i))
+            if (element.fulfilled(elements, ii + 1, flags, text, i))
             {
-                matches[iii] ~= text[iv..(element.min != 0 ? ++i : iv)];
+                matches[iii] ~= text[iv..(element.min != 0 ? i + 1 < text.length ? ++i : i : i)];
                 ii++;
             }
             else if (element.token == RESET)
@@ -860,15 +810,15 @@ private static pure string[] mmatch(Element[] elements, char[] table, ubyte flag
             {
                 ii++;
                 
-                if (element.fulfilled(elements, ii + 1, table, flags, text, i))
+                if (element.fulfilled(elements, ii + 1, flags, text, i))
                 {
-                    matches[iii] ~= text[iv..(element.min != 0 ? ++i : iv)];
+                    matches[iii] ~= text[iv..(element.min != 0 ? i + 1 < text.length ? ++i : i : i)];
                     ii++;
                 }
             }
             else
             {
-                if (!elements[0].fulfilled(elements, ii + 1, table, flags, text, i))
+                if (!elements[0].fulfilled(elements, ii + 1, flags, text, i))
                     i++;
                 
                 matches[iii] = null;
@@ -906,40 +856,42 @@ public:
 
     pure string matchFirst(string TEXT)()
     {
-        mixin localCache;
-        lookups["\\w"] = insert("a-zA-Z0-9_");
-        lookups["\\d"] = insert("0-9");
-        lookups["\\s"] = insert(" \t\r\n\f");
-        lookups["\\h"] = insert(" \t");
-        lookups["\\t"] = insert("\t");
-        lookups["\\r"] = insert("\r");
-        lookups["\\n"] = insert("\n");
-        lookups["\\f"] = insert("\f");
-        lookups["\\v"] = insert("\v");
-        lookups["\\b"] = insert("\b");
-        lookups["\\a"] = insert("\a");
-        lookups["\\0"] = insert("\0");
+        string[string] lookups;
+        lookups["\\w"] = expand("a-zA-Z0-9_", lookups);
+        lookups["\\d"] = expand("0-9", lookups);
+        lookups["\\s"] = expand(" \t\r\n\f", lookups);
+        lookups["\\h"] = expand(" \t", lookups);
+        lookups["\\t"] = expand("\t", lookups);
+        lookups["\\r"] = expand("\r", lookups);
+        lookups["\\n"] = expand("\n", lookups);
+        lookups["\\f"] = expand("\f", lookups);
+        lookups["\\v"] = expand("\v", lookups);
+        lookups["\\b"] = expand("\b", lookups);
+        lookups["\\a"] = expand("\a", lookups);
+        lookups["\\0"] = expand("\0", lookups);
 
-        return mmatchFirst(PATTERN.build!insert, table, FLAGS, TEXT);
+        return null;
+        //return mmatchFirst(PATTERN.build(lookups), FLAGS, TEXT);
     }
 
     pure string[] match(string TEXT)()
     {
-        mixin localCache;
-        lookups["\\w"] = insert("a-zA-Z0-9_");
-        lookups["\\d"] = insert("0-9");
-        lookups["\\s"] = insert(" \t\r\n\f");
-        lookups["\\h"] = insert(" \t");
-        lookups["\\t"] = insert("\t");
-        lookups["\\r"] = insert("\r");
-        lookups["\\n"] = insert("\n");
-        lookups["\\f"] = insert("\f");
-        lookups["\\v"] = insert("\v");
-        lookups["\\b"] = insert("\b");
-        lookups["\\a"] = insert("\a");
-        lookups["\\0"] = insert("\0");
+        string[string] lookups;
+        lookups["\\w"] = expand("a-zA-Z0-9_", lookups);
+        lookups["\\d"] = expand("0-9", lookups);
+        lookups["\\s"] = expand(" \t\r\n\f", lookups);
+        lookups["\\h"] = expand(" \t", lookups);
+        lookups["\\t"] = expand("\t", lookups);
+        lookups["\\r"] = expand("\r", lookups);
+        lookups["\\n"] = expand("\n", lookups);
+        lookups["\\f"] = expand("\f", lookups);
+        lookups["\\v"] = expand("\v", lookups);
+        lookups["\\b"] = expand("\b", lookups);
+        lookups["\\a"] = expand("\a", lookups);
+        lookups["\\0"] = expand("\0", lookups);
 
-        return mmatch(PATTERN.build!insert, table, FLAGS, TEXT);
+        return null;
+        //return mmatch(PATTERN.build(lookups), FLAGS, TEXT);
     }
 }
 
@@ -966,19 +918,19 @@ public:
     
     this(string pattern, ubyte flags)
     {
-        this.elements = pattern.build!(cache.insert);
-        foreach (element; pattern.build!(cache.insert))
+        this.elements = pattern.build(lookups);
+        foreach (element; elements)
             element.writeln;
         this.flags = flags;
     }
 
     string matchFirst(string text)
     {
-        return mmatchFirst(elements, cache.table, flags, text);
+        return mmatchFirst(elements, flags, text);
     }
 
     string[] match(string text)
     {
-        return mmatch(elements, cache.table, flags, text);
+        return mmatch(elements, flags, text);
     }
-}
+} 

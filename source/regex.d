@@ -1,4 +1,5 @@
-import std.stdio;
+module godwit.regex;
+
 import std.typecons;
 import std.bitmanip;
 import std.string;
@@ -7,17 +8,6 @@ import std.ascii;
 import std.algorithm;
 import std.datetime;
 import std.regex;
-
-void main()
-{
-    //writeln(regex!(r".", GLOBAL).matchFirst!("abc"));
-    //Regex re = new Regex(r"\w{4}...............................+?", GLOBAL);
-    Regex re = regex!(r"(hey)...++", GLOBAL | SINGLELINE).ctor();
-    writeln(re.match("hey, i just met you, and this is crazy, but here's my number, so call me maybe"));
-    /* foreach (element; regex.elements)
-        writeln(element);
-    writeln(regex.match("aaa")); */
-}
 
 public enum : ubyte
 {

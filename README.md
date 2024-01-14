@@ -1,1 +1,1 @@
-Now part of Godwit until split off into a utility library.
+SEE CAIMAN, THIS IS NO LONGER MAINTAINED HERE
